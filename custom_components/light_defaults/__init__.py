@@ -14,11 +14,13 @@ leaves out brightness and/or color, the configured defaults fill the gap:
   still gets the default temperature, and an explicit color keeps the default
   brightness.
 - Lights that are already on, and calls with an effect or flash, are left alone.
+- A light group's defaults also cover the lights in it that have none of their
+  own; a light in more than one configured group gets the smallest one's.
 - After editing the map, run the `light_defaults.reload` action. No restart needed.
 
-Lights can also be set up in the UI (config_flow.py), one config entry per
-light. A light set up in the UI ignores its YAML entry, and its entry follows
-the light when its entity ID changes.
+Lights can also be set up in the UI (config_flow.py), where one config entry
+gives one or more lights the same defaults. A light set up in the UI ignores
+its YAML entry, and its entry follows the light when its entity ID changes.
 
 How it works: Home Assistant's light integration already runs a per-light
 "defaults" step on every turn-on and toggle (the hook behind light_profiles.csv).
@@ -48,7 +50,7 @@ from homeassistant.components.light import (
     DOMAIN as LIGHT_DOMAIN,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ENTITY_ID, SERVICE_RELOAD
+from homeassistant.const import ATTR_ENTITY_ID, CONF_ENTITIES, SERVICE_RELOAD
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.reload import async_integration_yaml_config
@@ -63,6 +65,11 @@ CONF_TEMPERATURE = "temperature"
 
 # Where the light integration keeps its profiles object (light.const.DATA_PROFILES).
 PROFILES_KEY = "light_profiles"
+
+# Where ZHA, WLED and MQTT groups (Zigbee2MQTT 2.10+) list their members
+# (const.ATTR_GROUP_ENTITIES, which older HA doesn't have). HA light groups
+# use the entity_id attribute instead.
+ATTR_GROUP_ENTITIES = "group_entities"
 
 # Color attributes as they look at the defaults step: color_name has already
 # become rgb_color and any `profile:` has already been applied.
@@ -101,11 +108,20 @@ class LightDefaults:
     yaml: dict[str, dict[str, int]] = field(default_factory=dict)
     entries: dict[str, dict[str, int]] = field(default_factory=dict)
 
-    def get(self, entity_id: str) -> dict[str, int] | None:
-        """A light's defaults; a UI entry replaces its YAML entry."""
+    def get(self, hass: HomeAssistant, entity_id: str) -> dict[str, int] | None:
+        """A light's own defaults (a UI entry replaces its YAML entry), or else
+        those of a configured group it's in."""
         if entity_id in self.entries:
             return self.entries[entity_id]
-        return self.yaml.get(entity_id)
+        if entity_id in self.yaml:
+            return self.yaml[entity_id]
+        # Otherwise the smallest configured group the light is in.
+        groups = [
+            (len(lights), group_id)
+            for group_id in self.entries.keys() | self.yaml.keys()
+            if entity_id in (lights := _group_lights(hass, group_id))
+        ]
+        return self.get(hass, min(groups)[1]) if groups else None
 
     def warn_overlap(self) -> None:
         """Log lights set up in both places, since their YAML entry is ignored."""
@@ -114,6 +130,22 @@ class LightDefaults:
                 "Set up both in YAML and in the UI, using the UI values: %s",
                 ", ".join(both),
             )
+
+
+def _group_lights(hass: HomeAssistant, entity_id: str) -> set[str]:
+    """The lights in a group, through nested groups; empty for a plain light."""
+    found: set[str] = set()
+    todo = [entity_id]
+    while todo:
+        if (state := hass.states.get(todo.pop())) is None:
+            continue
+        attrs = state.attributes
+        members = attrs.get(ATTR_GROUP_ENTITIES) or attrs.get(ATTR_ENTITY_ID) or ()
+        for member in members:
+            if member != entity_id and member not in found:
+                found.add(member)
+                todo.append(member)
+    return found
 
 
 def _fill_defaults(
@@ -150,7 +182,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         **kwargs: Any,
     ) -> None:
         try:
-            _fill_defaults(defaults.get(entity_id), state_on, params)
+            _fill_defaults(defaults.get(hass, entity_id), state_on, params)
         except Exception:  # Never let this break light.turn_on.
             _LOGGER.exception("Couldn't apply defaults to %s", entity_id)
         # Any light_profiles.csv defaults still apply to whatever is left.
@@ -170,14 +202,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     @callback
     def entity_id_changed(event: Event[er.EventEntityRegistryUpdatedData]) -> None:
-        """Move a light's UI entry to its new entity ID."""
+        """Rename a light in its UI entry; the update listener does the rest."""
         old, new = event.data["old_entity_id"], event.data["entity_id"]
         for entry in hass.config_entries.async_entries(DOMAIN):
-            if entry.data[CONF_ENTITY_ID] == old:
-                if old in defaults.entries:
-                    defaults.entries[new] = defaults.entries.pop(old)
+            if old in (lights := entry.options[CONF_ENTITIES]):
                 hass.config_entries.async_update_entry(
-                    entry, data={CONF_ENTITY_ID: new}, unique_id=new
+                    entry,
+                    options={
+                        **entry.options,
+                        CONF_ENTITIES: [new if e == old else e for e in lights],
+                    },
                 )
 
     @callback
@@ -190,19 +224,39 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Add a light set up in the UI; entry.options holds its defaults."""
-    defaults: LightDefaults = hass.data[DOMAIN]
-    defaults.entries[entry.data[CONF_ENTITY_ID]] = dict(entry.options)
+@callback
+def _add_entry(defaults: LightDefaults, entry: ConfigEntry) -> None:
+    """Give each of the entry's lights its defaults."""
+    light = {
+        key: entry.options[key]
+        for key in (CONF_BRIGHTNESS, CONF_TEMPERATURE)
+        if key in entry.options
+    }
+    # The lights to take out again when the entry changes or unloads.
+    entry.runtime_data = list(entry.options[CONF_ENTITIES])
+    for entity_id in entry.runtime_data:
+        defaults.entries[entity_id] = light
     defaults.warn_overlap()
+
+
+@callback
+def _remove_entry(defaults: LightDefaults, entry: ConfigEntry) -> None:
+    for entity_id in entry.runtime_data:
+        defaults.entries.pop(entity_id, None)
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Add lights set up in the UI; entry.options holds them and their defaults."""
+    _add_entry(hass.data[DOMAIN], entry)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    hass.data[DOMAIN].entries[entry.data[CONF_ENTITY_ID]] = dict(entry.options)
+    _remove_entry(hass.data[DOMAIN], entry)
+    _add_entry(hass.data[DOMAIN], entry)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    hass.data[DOMAIN].entries.pop(entry.data[CONF_ENTITY_ID], None)
+    _remove_entry(hass.data[DOMAIN], entry)
     return True

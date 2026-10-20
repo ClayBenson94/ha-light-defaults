@@ -1,7 +1,8 @@
-"""UI setup for Light Defaults: one config entry per light.
+"""UI setup for Light Defaults: one config entry per set of lights.
 
-entry.data holds the light's entity ID, entry.options its defaults in the same
-shape as a YAML entry ({"brightness": 80, "temperature": 2700}).
+entry.options holds the lights and their defaults, the defaults in the same
+shape as a YAML entry: {"entities": ["light.a", "light.b"], "brightness": 80,
+"temperature": 2700}. entry.data is empty.
 """
 
 from typing import Any
@@ -15,8 +16,8 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.const import CONF_ENTITY_ID
-from homeassistant.core import callback
+from homeassistant.const import CONF_ENTITIES, CONF_NAME
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
 from . import CONF_BRIGHTNESS, CONF_TEMPERATURE, DOMAIN
@@ -44,17 +45,55 @@ DEFAULTS_FIELDS = {
 }
 
 
-def _defaults(user_input: dict[str, Any]) -> dict[str, int]:
-    """The defaults the form returned, as whole numbers."""
+def _taken(hass: HomeAssistant, entry_id: str | None = None) -> set[str]:
+    """Lights in entries other than entry_id; a light can only be in one."""
     return {
+        entity_id
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != entry_id
+        for entity_id in entry.options[CONF_ENTITIES]
+    }
+
+
+def _lights_field(hass: HomeAssistant, entry_id: str | None = None) -> dict:
+    return {
+        vol.Required(CONF_ENTITIES): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=LIGHT_DOMAIN,
+                multiple=True,
+                exclude_entities=sorted(_taken(hass, entry_id)),
+            )
+        )
+    }
+
+
+def _options(
+    hass: HomeAssistant,
+    user_input: dict[str, Any],
+    errors: dict[str, str],
+    entry_id: str | None = None,
+) -> dict[str, Any] | None:
+    """The form's lights and whole-number defaults, or None with errors set."""
+    lights = user_input[CONF_ENTITIES]
+    defaults = {
         key: round(user_input[key])
         for key in (CONF_BRIGHTNESS, CONF_TEMPERATURE)
         if key in user_input
     }
+    if not lights:
+        errors[CONF_ENTITIES] = "no_lights"
+    elif _taken(hass, entry_id).intersection(lights):
+        # Added in another form since this one opened.
+        errors[CONF_ENTITIES] = "already_configured"
+    elif not defaults:
+        errors["base"] = "no_defaults"
+    else:
+        return {CONF_ENTITIES: lights, **defaults}
+    return None
 
 
 class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Add defaults for one light."""
+    """Add defaults for one or more lights."""
 
     VERSION = 1
 
@@ -63,27 +102,21 @@ class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            entity_id = user_input[CONF_ENTITY_ID]
-            await self.async_set_unique_id(entity_id)
-            self._abort_if_unique_id_configured()
-            if defaults := _defaults(user_input):
-                state = self.hass.states.get(entity_id)
+            if options := _options(self.hass, user_input, errors):
+                names = []
+                for entity_id in options[CONF_ENTITIES]:
+                    state = self.hass.states.get(entity_id)
+                    names.append(state.name if state else entity_id)
                 return self.async_create_entry(
-                    title=state.name if state else entity_id,
-                    data={CONF_ENTITY_ID: entity_id},
-                    options=defaults,
+                    title=user_input.get(CONF_NAME, "").strip() or ", ".join(names),
+                    data={},
+                    options=options,
                 )
-            errors["base"] = "no_defaults"
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_ENTITY_ID): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=LIGHT_DOMAIN,
-                        # Lights that already have an entry.
-                        exclude_entities=list(self._async_current_ids()),
-                    )
-                ),
+                **_lights_field(self.hass),
+                vol.Optional(CONF_NAME): selector.TextSelector(),
                 **DEFAULTS_FIELDS,
             }
         )
@@ -100,23 +133,23 @@ class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class LightDefaultsOptionsFlow(OptionsFlow):
-    """Change a light's defaults."""
+    """Change an entry's lights and defaults."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        entry_id = self.config_entry.entry_id
         errors: dict[str, str] = {}
         if user_input is not None:
-            if defaults := _defaults(user_input):
-                return self.async_create_entry(data=defaults)
-            errors["base"] = "no_defaults"
+            if options := _options(self.hass, user_input, errors, entry_id):
+                return self.async_create_entry(data=options)
 
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema(DEFAULTS_FIELDS),
+                vol.Schema({**_lights_field(self.hass, entry_id), **DEFAULTS_FIELDS}),
                 self.config_entry.options if user_input is None else user_input,
             ),
             errors=errors,
-            description_placeholders={"light": self.config_entry.title},
+            description_placeholders={"name": self.config_entry.title},
         )

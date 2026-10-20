@@ -20,10 +20,15 @@ Set up lights in the UI, in YAML, or both.
 ### In the UI
 
 Go to **Settings → Devices & services → Add integration**, choose **Light
-Defaults**, then pick a light and set a brightness, a color temperature or
-both. Each light gets its own entry on the Light Defaults page. **Add entry**
-there adds another light, **Configure** on an entry changes its values, and
-deleting the entry removes them. Changes apply right away.
+Defaults**, then pick one or more lights and set a brightness, a color
+temperature or both. A light group covers the lights in it, so picking the
+group is enough (see [Behavior](#behavior)). All the lights in an entry share
+its values, and you can give the entry a name (otherwise it's named after its
+lights). **Add entry** on
+the Light Defaults page adds another set of lights, **Configure** on an entry
+changes its lights or values, and deleting the entry removes them. Changes
+apply right away. A light can only be in one entry, so lights that already
+have one aren't offered again.
 
 If you change a light's entity ID, its entry follows it. The YAML map can't,
 so update the entity ID there yourself.
@@ -79,6 +84,12 @@ warning naming it. Lights only in YAML keep working as before.
   own still gets the default temperature, and an explicit color keeps the
   default brightness.
 - Lights that are already on, and calls with an effect or flash, are left alone.
+- A light group's defaults also cover the lights in it, whether you turn on the
+  group or a single light, so setting up the group is enough. This works for
+  Home Assistant light groups, groups inside groups, and Zigbee2MQTT groups
+  (Zigbee2MQTT 2.10 or later, which tells Home Assistant what's in each group).
+  A light with defaults of its own uses those when it's turned on by itself,
+  and a light in more than one configured group gets the smallest group's.
 - Lights without color temperature support ignore `temperature`.
 - Turn-ons that bypass Home Assistant (Zigbee-bound remotes, power at the wall)
   aren't affected.
