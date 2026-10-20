@@ -117,10 +117,13 @@ changes, but it's the first thing to check if an HA update breaks the tests.
   in `custom_components/light_defaults/brand/` (`icon.png` 256 px,
   `icon@2x.png` 512 px); HA serves these for custom integrations.
 - The repo must stay public; HACS can't read private repos.
+- Changes go through pull requests against `main`; don't push to `main`
+  directly. No CI runs on pull requests, so run the tests before merging.
 - HACS installs GitHub releases (since v1.1.0) and ignores plain tags, so a
-  push to `main` doesn't reach HACS until the next release. To ship, bump
-  `version` in `manifest.json`, commit and push, then publish a release whose
-  tag matches it: `gh release create vX.Y.Z --target <sha> --title vX.Y.Z
+  merge to `main` doesn't reach HACS until the next release. To ship, bump
+  `version` in `manifest.json` in the pull request, merge it, then publish a
+  release from the merged commit on `main` with a tag that matches the
+  version: `gh release create vX.Y.Z --target <main sha> --title vX.Y.Z
   --notes-file <notes>`. HACS shows the notes in its update dialog, so write
   them for the owner (what changed, and whether to restart).
 
