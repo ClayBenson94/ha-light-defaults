@@ -26,6 +26,29 @@ light_defaults:
 Either key can be left out. After editing the map, run the
 `light_defaults.reload` action; no restart needed.
 
+### Keeping the map in its own file
+
+To keep `configuration.yaml` short, point `light_defaults` at a separate file
+in the same folder:
+
+```yaml
+# configuration.yaml
+light_defaults: !include light_defaults.yaml
+```
+
+```yaml
+# light_defaults.yaml
+light.office_lamp:
+  brightness: 100
+  temperature: 6500
+light.living_room_lamp:
+  brightness: 80
+```
+
+The included file holds just the map: no `light_defaults:` line, and the entity
+IDs start at the left margin. `light_defaults.reload` re-reads it, so edits
+there don't need a restart either.
+
 ## Behavior
 
 - Applies only when a light turns on from off, through `light.turn_on` or

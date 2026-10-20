@@ -181,6 +181,26 @@ async def test_reload_picks_up_changes(hass, lights):
     assert last(lights, "light.dimmer") == {}
 
 
+async def test_reload_reads_map_from_included_file(hass, lights, tmp_path, monkeypatch):
+    monkeypatch.setattr(hass.config, "config_dir", str(tmp_path))
+    (tmp_path / "configuration.yaml").write_text(
+        "light_defaults: !include light_defaults.yaml\n"
+    )
+    (tmp_path / "light_defaults.yaml").write_text(
+        "light.ct_lamp:\n  brightness: 50\n  temperature: 2700\n"
+    )
+    await hass.services.async_call("light_defaults", "reload", blocking=True)
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    assert last(lights, "light.ct_lamp") == {"brightness": 128, "color_temp_kelvin": 2700}
+
+    # Edits to the included file show up on the next reload.
+    await call(hass, "turn_off", entity_id="light.ct_lamp")
+    (tmp_path / "light_defaults.yaml").write_text("light.ct_lamp:\n  brightness: 20\n")
+    await hass.services.async_call("light_defaults", "reload", blocking=True)
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    assert last(lights, "light.ct_lamp") == {"brightness": 51}
+
+
 async def test_reload_with_bad_config_keeps_current_map(hass, lights):
     bad = {"light_defaults": {"light.ct_lamp": {"brightness": 150}}}
     with patch("homeassistant.config.async_hass_config_yaml", return_value=bad):

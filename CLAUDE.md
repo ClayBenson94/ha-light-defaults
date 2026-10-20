@@ -43,7 +43,11 @@ Don't change these without asking the owner:
   untouched. If the hook is missing, `async_setup` logs an error and returns
   False.
 - `light_defaults.reload` (admin-only) re-reads the YAML; invalid YAML keeps
-  the current map.
+  the current map. The README offers `light_defaults: !include
+  light_defaults.yaml` as a way to keep the map in its own file; HA resolves
+  the include, and reload picks up edits to it because
+  `async_integration_yaml_config` re-reads `configuration.yaml` and its
+  includes. Keep reload on that helper.
 
 ## How it works
 
