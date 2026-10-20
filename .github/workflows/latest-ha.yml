@@ -1,0 +1,26 @@
+# Runs the tests against the newest pytest-homeassistant-custom-component, so a
+# Home Assistant change to the light profiles hook shows up before you update HA.
+name: Latest Home Assistant
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - name: Install latest Home Assistant test harness
+        run: |
+          uv venv --python 3.14 .venv
+          uv pip install --python .venv/bin/python --upgrade pytest-homeassistant-custom-component
+      - name: Record versions
+        run: |
+          {
+            echo "pytest-homeassistant-custom-component $(uv pip show --python .venv/bin/python pytest-homeassistant-custom-component | sed -n 's/^Version: //p')"
+            echo "homeassistant $(uv pip show --python .venv/bin/python homeassistant | sed -n 's/^Version: //p')"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: .venv/bin/pytest

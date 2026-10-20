@@ -1,0 +1,11 @@
+{
+  "domain": "light_defaults",
+  "name": "Light Defaults",
+  "codeowners": ["@ClayBenson94"],
+  "dependencies": ["light"],
+  "documentation": "https://github.com/ClayBenson94/ha-light-defaults",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/ClayBenson94/ha-light-defaults/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
