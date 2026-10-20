@@ -10,9 +10,25 @@ set to.
 1. In HACS, open the ⋮ menu → **Custom repositories**, add
    `https://github.com/ClayBenson94/ha-light-defaults` with type **Integration**.
 2. Download **Light Defaults**.
-3. Add your map to `configuration.yaml` (below) and restart Home Assistant.
+3. Restart Home Assistant, then set up your lights in the UI or in YAML
+   (below).
 
 ## Configure
+
+Set up lights in the UI, in YAML, or both.
+
+### In the UI
+
+Go to **Settings → Devices & services → Add integration**, choose **Light
+Defaults**, then pick a light and set a brightness, a color temperature or
+both. Each light gets its own entry on the Light Defaults page. **Add entry**
+there adds another light, **Configure** on an entry changes its values, and
+deleting the entry removes them. Changes apply right away.
+
+If you change a light's entity ID, its entry follows it. The YAML map can't,
+so update the entity ID there yourself.
+
+### In YAML
 
 ```yaml
 light_defaults:
@@ -49,6 +65,11 @@ The included file holds just the map: no `light_defaults:` line, and the entity
 IDs start at the left margin. `light_defaults.reload` re-reads it, so edits
 there don't need a restart either.
 
+### Both
+
+A light set up in the UI ignores its YAML entry, and Home Assistant logs a
+warning naming it. Lights only in YAML keep working as before.
+
 ## Behavior
 
 - Applies only when a light turns on from off, through `light.turn_on` or
@@ -75,8 +96,8 @@ Tested on Home Assistant 2026.10.2.
 
 ## Updating
 
-HACS tracks the default branch, so every push to `main` shows up in HACS as an
-update. Install it from HACS and restart Home Assistant.
+HACS offers each new GitHub release as an update, with its release notes.
+Install it from HACS and restart Home Assistant.
 
 ## Development
 

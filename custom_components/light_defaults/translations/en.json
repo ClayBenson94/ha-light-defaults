@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add light defaults",
+        "description": "Used when the light turns on from off and the call leaves out brightness or color. Leave either one empty to keep the light's own behavior for it.",
+        "data": {
+          "entity_id": "Light",
+          "brightness": "Brightness",
+          "temperature": "Color temperature"
+        },
+        "data_description": {
+          "temperature": "Lights without color temperature support ignore this."
+        }
+      }
+    },
+    "error": {
+      "no_defaults": "Set a brightness, a color temperature or both."
+    },
+    "abort": {
+      "already_configured": "This light already has defaults. Use Configure on its entry to change them."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Defaults for {light}",
+        "description": "Used when the light turns on from off and the call leaves out brightness or color. Leave either one empty to keep the light's own behavior for it.",
+        "data": {
+          "brightness": "Brightness",
+          "temperature": "Color temperature"
+        },
+        "data_description": {
+          "temperature": "Lights without color temperature support ignore this."
+        }
+      }
+    },
+    "error": {
+      "no_defaults": "Set a brightness, a color temperature or both."
+    }
+  }
+}

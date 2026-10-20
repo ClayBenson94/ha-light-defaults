@@ -7,7 +7,8 @@ Context for working on this repo. Read it before changing anything.
 `light_defaults` is a Home Assistant custom integration, installed through HACS
 as a custom repository. When a light turns on from off and the `light.turn_on`
 or `light.toggle` call leaves out brightness or color, it fills in per-light
-defaults from a YAML map:
+defaults from a YAML map, or from config entries set up in the UI (one per
+light):
 
 ```yaml
 light_defaults:
@@ -20,7 +21,8 @@ light_defaults:
 
 Built for color-temperature-only bulbs on Zigbee2MQTT (Hue White Ambiance
 class). The flat entity → `brightness`/`temperature` map is the point of the
-project; keep it that simple, and keep the code small (YAML-only, one module)
+project; keep it that simple. The owner asked for UI setup too, which lives in
+`config_flow.py`; keep everything else in `__init__.py` and keep the code small
 unless the owner asks for more.
 
 ## Behavior contract
@@ -48,6 +50,9 @@ Don't change these without asking the owner:
   the include, and reload picks up edits to it because
   `async_integration_yaml_config` re-reads `configuration.yaml` and its
   includes. Keep reload on that helper.
+- A light set up in the UI replaces its YAML entry as a whole (not per
+  attribute), and a warning names the overlap. Reload only touches the YAML
+  side; UI changes apply as soon as the flow saves.
 
 ## How it works
 
@@ -70,6 +75,18 @@ its own defaults. A Z2M group is a single MQTT light entity and works like any
 light. Adaptive Lighting, if it's ever added, intercepts at the service level
 and writes its values before this hook runs, so lights it manages follow AL.
 
+`hass.data["light_defaults"]` is a `LightDefaults` holding the YAML map
+(`.yaml`) and the UI entries (`.entries`), both keyed by entity ID; the hook
+reads it through `.get()`. `async_setup` installs the hook whether or not YAML
+exists (HA calls it before setting up config entries). Each config entry
+stores the entity ID in `data` and the defaults in `options`, in the same shape
+as a YAML entry. `async_setup_entry` and an update listener copy `options` into
+`.entries`, and `async_unload_entry` removes it. The config flow sets the entity
+ID as the unique ID and leaves already-configured lights out of the picker.
+A listener on `entity_registry_updated` (filtered to events with
+`old_entity_id`) moves an entry, and its unique ID, to the light's new entity
+ID. The YAML map isn't touched on renames.
+
 The hook is internal API. HA marks light profiles as frozen, so it rarely
 changes, but it's the first thing to check if an HA update breaks the tests.
 
@@ -77,15 +94,21 @@ changes, but it's the first thing to check if an HA update breaks the tests.
 
 - Exactly one folder under `custom_components/`. Test helpers live in `tests/`.
 - `manifest.json` must keep `domain`, `name`, `version`, `documentation`,
-  `issue_tracker` and `codeowners`, plus `dependencies: ["light"]`.
+  `issue_tracker` and `codeowners`, plus `dependencies: ["light"]` and
+  `config_flow: true`.
+- UI strings live in `custom_components/light_defaults/translations/en.json`.
+  Custom integrations don't get `strings.json` compiled, so edit `en.json`
+  directly.
 - `hacs.json` (just `name`) and `README.md` stay at the root. Brand icons live
   in `custom_components/light_defaults/brand/` (`icon.png` 256 px,
   `icon@2x.png` 512 px); HA serves these for custom integrations.
 - The repo must stay public; HACS can't read private repos.
-- No GitHub releases: HACS tracks `main`, so every push to `main` shows up as
-  an update. Don't publish a release or tag casually; once releases exist, HACS
-  follows releases instead of commits. Bump `version` in `manifest.json` for
-  notable changes (HA logs it).
+- HACS installs GitHub releases (since v1.1.0) and ignores plain tags, so a
+  push to `main` doesn't reach HACS until the next release. To ship, bump
+  `version` in `manifest.json`, commit and push, then publish a release whose
+  tag matches it: `gh release create vX.Y.Z --target <sha> --title vX.Y.Z
+  --notes-file <notes>`. HACS shows the notes in its update dialog, so write
+  them for the owner (what changed, and whether to restart).
 
 ## Development
 
@@ -107,6 +130,8 @@ change to check before updating HA.
 
 - `tests/test_light_defaults.py`: behavior, using recording test lights from
   `tests/recording_light.py`.
+- `tests/test_config_flow.py`: UI setup (config and options flows, entries,
+  overlap with YAML).
 - `tests/test_mqtt_z2m.py`: the MQTT payload a Zigbee2MQTT-style light
   receives. A bare turn-on is a single
   `{"state": "ON", "brightness": 254, "color_temp": 153}` command.
@@ -124,6 +149,10 @@ Gotchas:
 - `tests/conftest.py` imports `custom_components` at collection time. Without
   that, the harness binds `custom_components` to its own testing config and HA
   reports "Integration not found".
+- The options flow is created as `LightDefaultsOptionsFlow()` and reads
+  `self.config_entry`; passing the entry in or assigning it is deprecated. Don't
+  switch to `OptionsFlowWithReload`: HA forbids it alongside the update
+  listener, and it needs HA 2025.8+.
 - The MQTT tests set `expected_lingering_timers` because the mocked client
   leaves a timer behind.
 - Don't use `async_get_all_descriptions` in tests; it imports every loaded
@@ -140,12 +169,3 @@ Gotchas:
 - Automations on off → on: a second command after the light is already on, and
   no way to tell explicit values from defaults.
 - Wrapper or template lights: duplicate every entity.
-
-## Open items
-
-Delete each line once it's done.
-
-- [ ] Owner adds the repo in HACS (⋮ → Custom repositories, type
-  Integration), downloads Light Defaults, adds the YAML map and restarts HA.
-  If a copy was placed in `config/custom_components/light_defaults` by hand
-  earlier, delete it first so HACS owns that folder.
