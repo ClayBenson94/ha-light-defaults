@@ -7,8 +7,8 @@ Context for working on this repo. Read it before changing anything.
 `light_defaults` is a Home Assistant custom integration, installed through HACS
 as a custom repository. When a light turns on from off and the `light.turn_on`
 or `light.toggle` call leaves out brightness or color, it fills in per-light
-defaults from a YAML map, or from config entries set up in the UI (one per
-light):
+defaults from a YAML map, or from config entries set up in the UI (each one
+gives one or more lights the same values):
 
 ```yaml
 light_defaults:
@@ -36,6 +36,8 @@ Don't change these without asking the owner:
   default temperature, and a call with any color attribute still gets the
   default brightness.
 - Calls with `effect` or `flash` are left alone.
+- A light with no entry of its own (UI or YAML) uses the smallest configured
+  group it's in, through nested groups. A light's own entry beats any group.
 - `brightness` is percent, converted with `round(255 * pct / 100)` (same as
   HA's `brightness_pct`). `temperature` is injected as `color_temp_kelvin`; HA
   converts or drops it per light.
@@ -51,7 +53,8 @@ Don't change these without asking the owner:
   `async_integration_yaml_config` re-reads `configuration.yaml` and its
   includes. Keep reload on that helper.
 - A light set up in the UI replaces its YAML entry as a whole (not per
-  attribute), and a warning names the overlap. Reload only touches the YAML
+  attribute), and a warning names the overlap. A light can only be in one UI
+  entry. Reload only touches the YAML
   side; UI changes apply as soon as the flow saves.
 
 ## How it works
@@ -70,22 +73,33 @@ light integration's `Profiles` object at `hass.data["light_profiles"]`
 - `process_turn_off_params()` calls `apply_default(entity_id, True, params)`;
   `state_on` is True, so we do nothing.
 
-HA light groups forward `light.turn_on` to their members, so each member gets
-its own defaults. A Z2M group is a single MQTT light entity and works like any
-light. Adaptive Lighting, if it's ever added, intercepts at the service level
+HA light groups forward `light.turn_on` to their members along with whatever
+the group's own defaults filled in, so members of a configured group that's
+turned on from off get the group's values. `LightDefaults.get` covers the other
+ways a member turns on (by itself, or through a group that's already on): a
+light with no entry of its own gets the smallest configured group whose
+members include it. `_group_lights` reads members from public state, recursing
+into nested groups: `group_entities` (ZHA, WLED, and MQTT entities with the
+`group` option, which Zigbee2MQTT sends from 2.10) or `entity_id` (HA light
+groups, which don't use `group_entities` yet). A Z2M group is a single MQTT
+light entity, so turning it on sends one command with the group's values. Adaptive Lighting, if it's ever added, intercepts at the service level
 and writes its values before this hook runs, so lights it manages follow AL.
 
 `hass.data["light_defaults"]` is a `LightDefaults` holding the YAML map
-(`.yaml`) and the UI entries (`.entries`), both keyed by entity ID; the hook
+(`.yaml`) and the UI lights (`.entries`), both keyed by entity ID; the hook
 reads it through `.get()`. `async_setup` installs the hook whether or not YAML
-exists (HA calls it before setting up config entries). Each config entry
-stores the entity ID in `data` and the defaults in `options`, in the same shape
-as a YAML entry. `async_setup_entry` and an update listener copy `options` into
-`.entries`, and `async_unload_entry` removes it. The config flow sets the entity
-ID as the unique ID and leaves already-configured lights out of the picker.
-A listener on `entity_registry_updated` (filtered to events with
-`old_entity_id`) moves an entry, and its unique ID, to the light's new entity
-ID. The YAML map isn't touched on renames.
+exists (HA calls it before setting up config entries). Each config entry keeps
+everything in `options`: its lights under `entities` and their shared defaults
+beside them, in the same shape as a YAML entry; `data` is empty and there's no
+unique ID (the entry's title is the optional name, or its lights' names).
+`async_setup_entry` and an update listener give each of the entry's lights its
+defaults in `.entries` and remember that list in `entry.runtime_data`, so a
+change or `async_unload_entry` can take the old lights out. A light can only be
+in one entry: both flows leave lights in other entries out of the picker and
+re-check on submit, for two forms open at once. A listener on
+`entity_registry_updated` (filtered to events with `old_entity_id`) renames the
+light in its entry's `options`, and the update listener does the rest. The
+YAML map isn't touched on renames.
 
 The hook is internal API. HA marks light profiles as frozen, so it rarely
 changes, but it's the first thing to check if an HA update breaks the tests.
@@ -129,11 +143,12 @@ records the HA version it tested in the run summary; a red run means an HA
 change to check before updating HA.
 
 - `tests/test_light_defaults.py`: behavior, using recording test lights from
-  `tests/recording_light.py`.
-- `tests/test_config_flow.py`: UI setup (config and options flows, entries,
-  overlap with YAML).
+  `tests/recording_light.py`, including lights covered by nested groups.
+- `tests/test_config_flow.py`: UI setup (config and options flows, entries
+  with several lights, a configured light group covering its lights, overlap
+  with YAML).
 - `tests/test_mqtt_z2m.py`: the MQTT payload a Zigbee2MQTT-style light
-  receives. A bare turn-on is a single
+  receives, alone and as a member of a configured Z2M group. A bare turn-on is a single
   `{"state": "ON", "brightness": 254, "color_temp": 153}` command.
 
 Gotchas:

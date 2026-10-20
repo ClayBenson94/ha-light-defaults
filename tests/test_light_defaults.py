@@ -155,6 +155,33 @@ async def test_light_group_members_get_their_own_defaults(hass, lights):
     assert last(lights, "light.dimmer") == {"brightness": 204}
 
 
+async def test_lights_get_the_smallest_configured_group_they_are_in(hass: HomeAssistant):
+    entities = make_lights()
+    setup_test_component_platform(hass, "light", entities)
+    lamps = {"platform": "group", "name": "Lamps", "entities": ["light.ct_lamp", "light.color_bulb"]}
+    downstairs = {"platform": "group", "name": "Downstairs", "entities": ["light.lamps", "light.dimmer"]}
+    yaml_map = {"light.downstairs": {"brightness": 80}, "light.lamps": {"brightness": 50}}
+    config = {"light": [{"platform": "test"}, lamps, downstairs], "light_defaults": yaml_map}
+    assert await async_setup_component(hass, "light_defaults", config)
+    await hass.async_block_till_done()
+    lights = {light.entity_id: light for light in entities}
+
+    await call(hass, "turn_on", entity_id="light.dimmer")
+    assert last(lights, "light.dimmer") == {"brightness": 204}
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    assert last(lights, "light.ct_lamp") == {"brightness": 128}
+    await call(hass, "turn_on", entity_id="light.unconfigured")
+    assert last(lights, "light.unconfigured") == {}
+
+    # Without its own group's entry, a light goes by the group that group is in.
+    del yaml_map["light.lamps"]
+    with patch("homeassistant.config.async_hass_config_yaml", return_value=config):
+        await hass.services.async_call("light_defaults", "reload", blocking=True)
+    await call(hass, "turn_off", entity_id="light.ct_lamp")
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    assert last(lights, "light.ct_lamp") == {"brightness": 204}
+
+
 async def test_light_profiles_csv_still_fills_the_rest(hass, lights):
     profiles = hass.data["light_profiles"]
     profiles.data["light.ct_lamp.default"] = Profile("light.ct_lamp.default", None, None, 10, 2)

@@ -3,39 +3,45 @@
     "step": {
       "user": {
         "title": "Add light defaults",
-        "description": "Used when the light turns on from off and the call leaves out brightness or color. Leave either one empty to keep the light's own behavior for it.",
+        "description": "Used when a light turns on from off and the call leaves out brightness or color. Pick one or more lights to share these values. A light group also covers the lights in it, except lights with defaults of their own. Leave either value empty to keep the lights' usual behavior for it.",
         "data": {
-          "entity_id": "Light",
+          "entities": "Lights",
+          "name": "Name",
           "brightness": "Brightness",
           "temperature": "Color temperature"
         },
         "data_description": {
+          "entities": "Lights that already have defaults in another entry aren't listed.",
+          "name": "Shown on the Light Defaults page. Leave empty to use the light names.",
           "temperature": "Lights without color temperature support ignore this."
         }
       }
     },
     "error": {
+      "no_lights": "Pick at least one light.",
+      "already_configured": "Some of these lights were just given defaults in another entry.",
       "no_defaults": "Set a brightness, a color temperature or both."
-    },
-    "abort": {
-      "already_configured": "This light already has defaults. Use Configure on its entry to change them."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Defaults for {light}",
-        "description": "Used when the light turns on from off and the call leaves out brightness or color. Leave either one empty to keep the light's own behavior for it.",
+        "title": "Defaults for {name}",
+        "description": "Used when a light turns on from off and the call leaves out brightness or color. A light group also covers the lights in it, except lights with defaults of their own. Leave either value empty to keep the lights' usual behavior for it.",
         "data": {
+          "entities": "Lights",
           "brightness": "Brightness",
           "temperature": "Color temperature"
         },
         "data_description": {
+          "entities": "Lights that already have defaults in another entry aren't listed.",
           "temperature": "Lights without color temperature support ignore this."
         }
       }
     },
     "error": {
+      "no_lights": "Pick at least one light.",
+      "already_configured": "Some of these lights were just given defaults in another entry.",
       "no_defaults": "Set a brightness, a color temperature or both."
     }
   }
