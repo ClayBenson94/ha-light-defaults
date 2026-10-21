@@ -9,11 +9,14 @@ leaves out brightness and/or color, the configured defaults fill the gap:
         temperature: 6500  # Kelvin
       light.living_room_lamp:
         brightness: 80
+        reset_when_on: true  # optional, see below
 
 - Anything in the call wins, per attribute: `brightness_pct: 100` on its own
   still gets the default temperature, and an explicit color keeps the default
   brightness.
 - Lights that are already on, and calls with an effect or flash, are left alone.
+  With `reset_when_on`, a plain turn-on (no brightness, no color) applies the
+  defaults to a light that's already on too.
 - A light group's defaults also cover the lights in it that have none of their
   own; a light in more than one configured group gets the smallest one's.
 - After editing the map, run the `light_defaults.reload` action. No restart needed.
@@ -62,6 +65,7 @@ _LOGGER = logging.getLogger(__name__)
 DOMAIN = "light_defaults"
 CONF_BRIGHTNESS = "brightness"
 CONF_TEMPERATURE = "temperature"
+CONF_RESET_WHEN_ON = "reset_when_on"
 
 # Where the light integration keeps its profiles object (light.const.DATA_PROFILES).
 PROFILES_KEY = "light_profiles"
@@ -91,6 +95,7 @@ LIGHT_SCHEMA = vol.Schema(
         vol.Optional(CONF_TEMPERATURE): vol.All(
             vol.Coerce(int), vol.Range(min=1000, max=10000)
         ),
+        vol.Optional(CONF_RESET_WHEN_ON): cv.boolean,
     }
 )
 
@@ -105,10 +110,10 @@ CONFIG_SCHEMA = vol.Schema(
 class LightDefaults:
     """Defaults by entity ID, from the YAML map and from UI config entries."""
 
-    yaml: dict[str, dict[str, int]] = field(default_factory=dict)
-    entries: dict[str, dict[str, int]] = field(default_factory=dict)
+    yaml: dict[str, dict[str, Any]] = field(default_factory=dict)
+    entries: dict[str, dict[str, Any]] = field(default_factory=dict)
 
-    def get(self, hass: HomeAssistant, entity_id: str) -> dict[str, int] | None:
+    def get(self, hass: HomeAssistant, entity_id: str) -> dict[str, Any] | None:
         """A light's own defaults (a UI entry replaces its YAML entry), or else
         those of a configured group it's in."""
         if entity_id in self.entries:
@@ -149,14 +154,24 @@ def _group_lights(hass: HomeAssistant, entity_id: str) -> set[str]:
 
 
 def _fill_defaults(
-    light: dict[str, int] | None, state_on: bool | None, params: dict[str, Any]
+    light: dict[str, Any] | None, state_on: bool | None, params: dict[str, Any]
 ) -> None:
-    """Fill in what the call left out, for a configured light turning on from off."""
-    if not light or state_on or ATTR_EFFECT in params or ATTR_FLASH in params:
+    """Fill in what the call left out, for a configured light turning on from off.
+
+    With reset_when_on, a plain call (no brightness, no color) to a light that's
+    already on gets them too. Turning a light off reaches here the same way
+    (on, empty params); HA's filter_turn_off_params then drops what we add.
+    """
+    if not light or ATTR_EFFECT in params or ATTR_FLASH in params:
         return
-    if CONF_BRIGHTNESS in light and ATTR_BRIGHTNESS not in params:
+    has_brightness = ATTR_BRIGHTNESS in params
+    has_color = any(attr in params for attr in COLOR_ATTRS)
+    plain = not has_brightness and not has_color
+    if state_on and not (plain and light.get(CONF_RESET_WHEN_ON)):
+        return
+    if CONF_BRIGHTNESS in light and not has_brightness:
         params[ATTR_BRIGHTNESS] = round(255 * light[CONF_BRIGHTNESS] / 100)
-    if CONF_TEMPERATURE in light and not any(attr in params for attr in COLOR_ATTRS):
+    if CONF_TEMPERATURE in light and not has_color:
         params[ATTR_COLOR_TEMP_KELVIN] = light[CONF_TEMPERATURE]
 
 
@@ -229,7 +244,7 @@ def _add_entry(defaults: LightDefaults, entry: ConfigEntry) -> None:
     """Give each of the entry's lights its defaults."""
     light = {
         key: entry.options[key]
-        for key in (CONF_BRIGHTNESS, CONF_TEMPERATURE)
+        for key in (CONF_BRIGHTNESS, CONF_TEMPERATURE, CONF_RESET_WHEN_ON)
         if key in entry.options
     }
     # The lights to take out again when the entry changes or unloads.

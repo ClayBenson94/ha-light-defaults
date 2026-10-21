@@ -92,6 +92,20 @@ async def test_partial_override_and_already_on(hass, mqtt_mock):
     assert await sent(hass, mqtt_mock) == {"state": "ON"}
 
 
+async def test_reset_when_on_sends_defaults_to_a_light_that_is_on(hass, mqtt_mock):
+    await _setup(
+        hass,
+        mqtt_mock,
+        {"light.office_lamp": {"brightness": 100, "temperature": 6500, "reset_when_on": True}},
+    )
+    report(hass, {"state": "ON", "brightness": 102, "color_temp": 370, "color_mode": "color_temp"})
+    await hass.async_block_till_done()
+    assert await sent(hass, mqtt_mock) == {"state": "ON", "brightness": 254, "color_temp": 153}
+
+    # Dimming a light that's on still leaves its temperature alone.
+    assert "color_temp" not in await sent(hass, mqtt_mock, brightness_pct=40)
+
+
 async def test_effect_passthrough(hass, mqtt_mock):
     await _setup(hass, mqtt_mock)
     assert await sent(hass, mqtt_mock, effect="candle") == {"state": "ON", "effect": "candle"}

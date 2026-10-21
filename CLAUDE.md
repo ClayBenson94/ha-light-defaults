@@ -17,21 +17,29 @@ light_defaults:
     temperature: 6500  # Kelvin, 1000–10000
   light.living_room_lamp:
     brightness: 80
+    reset_when_on: true  # optional
 ```
 
 Built for color-temperature-only bulbs on Zigbee2MQTT (Hue White Ambiance
 class). The flat entity → `brightness`/`temperature` map is the point of the
-project; keep it that simple. The owner asked for UI setup too, which lives in
-`config_flow.py`; keep everything else in `__init__.py` and keep the code small
-unless the owner asks for more.
+project; keep it that simple. The owner asked for the optional
+`reset_when_on` flag; don't add more keys without asking. The owner asked for
+UI setup too, which lives in `config_flow.py`; keep everything else in
+`__init__.py` and keep the code small unless the owner asks for more.
 
 ## Behavior contract
 
 Don't change these without asking the owner:
 
-- Applies only when the light is off and being turned on. Lights that are
-  already on are never touched, so a motion automation re-firing `turn_on`
+- Applies when the light is off and being turned on. Lights that are already
+  on are left alone by default, so a motion automation re-firing `turn_on`
   doesn't reset a dimmed light.
+- `reset_when_on` (per entry, off by default; a checkbox in both flows): a
+  plain turn-on (no brightness, no color attribute) of a light that's already
+  on gets both defaults, so a switch's "on" button doubles as a reset. Calls
+  that set brightness or a color still get nothing for a light that's on. A
+  light covered by a group follows the group's setting. The UI stores the key
+  only when it's ticked.
 - Explicit values win per attribute: a call with brightness still gets the
   default temperature, and a call with any color attribute still gets the
   default brightness.
@@ -70,8 +78,15 @@ light integration's `Profiles` object at `hass.data["light_profiles"]`
   `color_name` and `profile:` have been normalized into `brightness`,
   `rgb_color` or `hs_color`. Color-mode conversion and `filter_turn_on_params`
   run after it, which is why we only set `brightness` and `color_temp_kelvin`.
-- `process_turn_off_params()` calls `apply_default(entity_id, True, params)`;
-  `state_on` is True, so we do nothing.
+  For a light that's already on, it skips `apply_default` when the call has a
+  `transition`, so a plain turn-on with a transition never resets.
+- `process_turn_off_params()` calls `apply_default(entity_id, True, params)`,
+  which looks exactly like a plain turn-on of a light that's on. So for a
+  `reset_when_on` light we fill both defaults into turn-off params too;
+  `filter_turn_off_params` keeps only `transition` and `flash`, so they're
+  dropped (`test_reset_when_on_never_reaches_turn_off` checks this). HA's own
+  `Profiles.apply_default` relies on the same thing: it applies the whole
+  profile whenever `params` is empty.
 
 HA light groups forward `light.turn_on` to their members along with whatever
 the group's own defaults filled in, so members of a configured group that's
@@ -146,13 +161,15 @@ records the HA version it tested in the run summary; a red run means an HA
 change to check before updating HA.
 
 - `tests/test_light_defaults.py`: behavior, using recording test lights from
-  `tests/recording_light.py`, including lights covered by nested groups.
+  `tests/recording_light.py` (which record turn-on and turn-off kwargs),
+  including lights covered by nested groups and `reset_when_on`.
 - `tests/test_config_flow.py`: UI setup (config and options flows, entries
   with several lights, a configured light group covering its lights, overlap
-  with YAML).
+  with YAML, the `reset_when_on` checkbox).
 - `tests/test_mqtt_z2m.py`: the MQTT payload a Zigbee2MQTT-style light
   receives, alone and as a member of a configured Z2M group. A bare turn-on is a single
-  `{"state": "ON", "brightness": 254, "color_temp": 153}` command.
+  `{"state": "ON", "brightness": 254, "color_temp": 153}` command, and so is
+  a plain turn-on of a `reset_when_on` light that's already on.
 
 Gotchas:
 

@@ -73,6 +73,12 @@ def excluded(result) -> list[str]:
     return picker.config.get("exclude_entities", [])
 
 
+def suggested(result, field: str):
+    """The value a form shows in a field when it opens."""
+    key = next(key for key in result["data_schema"].schema if key == field)
+    return (key.description or {}).get("suggested_value")
+
+
 async def test_add_lights_in_the_ui(hass, lights):
     result = await start_flow(hass)
     assert result["type"] is FlowResultType.FORM
@@ -205,6 +211,41 @@ async def test_options_need_a_light_and_brightness_or_temperature(hass, lights):
     assert entry.options == {"entities": ["light.ct_lamp"], "brightness": 50}
 
 
+async def test_reset_when_on_from_the_ui(hass, lights):
+    async def dim_then_plain_turn_on() -> dict:
+        for data in ({"brightness_pct": 20}, {}):
+            await hass.services.async_call(
+                "light", "turn_on", {"entity_id": "light.ct_lamp", **data}, blocking=True
+            )
+        await hass.async_block_till_done()
+        return lights["light.ct_lamp"].calls[-1]
+
+    result = await start_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"entities": ["light.ct_lamp"], "brightness": 50, "reset_when_on": True},
+    )
+    assert result["options"] == {
+        "entities": ["light.ct_lamp"],
+        "brightness": 50,
+        "reset_when_on": True,
+    }
+    await hass.async_block_till_done()
+    assert await dim_then_plain_turn_on() == {"brightness": 128}
+
+    # Unticking it takes it out of the entry.
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert suggested(result, "reset_when_on") is True
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"entities": ["light.ct_lamp"], "brightness": 50, "reset_when_on": False},
+    )
+    await hass.async_block_till_done()
+    assert entry.options == {"entities": ["light.ct_lamp"], "brightness": 50}
+    assert await dim_then_plain_turn_on() == {}
+
+
 async def test_deleting_an_entry_stops_its_defaults(hass, lights):
     entry = await add_entry(hass, "light.ct_lamp", "light.dimmer", brightness=50)
     await hass.config_entries.async_remove(entry.entry_id)
@@ -285,7 +326,13 @@ def test_translations_cover_the_flows():
         "name",
         "brightness",
         "temperature",
+        "reset_when_on",
     }
-    assert set(options["step"]["init"]["data"]) == {"entities", "brightness", "temperature"}
+    assert set(options["step"]["init"]["data"]) == {
+        "entities",
+        "brightness",
+        "temperature",
+        "reset_when_on",
+    }
     for flow in (config, options):
         assert set(flow["error"]) == {"no_lights", "already_configured", "no_defaults"}

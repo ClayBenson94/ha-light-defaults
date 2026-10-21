@@ -2,7 +2,8 @@
 
 entry.options holds the lights and their defaults, the defaults in the same
 shape as a YAML entry: {"entities": ["light.a", "light.b"], "brightness": 80,
-"temperature": 2700}. entry.data is empty.
+"temperature": 2700}, plus "reset_when_on": True only when it's ticked.
+entry.data is empty.
 """
 
 from typing import Any
@@ -20,7 +21,7 @@ from homeassistant.const import CONF_ENTITIES, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
-from . import CONF_BRIGHTNESS, CONF_TEMPERATURE, DOMAIN
+from . import CONF_BRIGHTNESS, CONF_RESET_WHEN_ON, CONF_TEMPERATURE, DOMAIN
 
 # Optional, so either can be left out (or cleared later), like in YAML.
 DEFAULTS_FIELDS = {
@@ -42,6 +43,7 @@ DEFAULTS_FIELDS = {
             mode=selector.NumberSelectorMode.SLIDER,
         )
     ),
+    vol.Optional(CONF_RESET_WHEN_ON): selector.BooleanSelector(),
 }
 
 
@@ -88,6 +90,8 @@ def _options(
     elif not defaults:
         errors["base"] = "no_defaults"
     else:
+        if user_input.get(CONF_RESET_WHEN_ON):
+            defaults[CONF_RESET_WHEN_ON] = True
         return {CONF_ENTITIES: lights, **defaults}
     return None
 

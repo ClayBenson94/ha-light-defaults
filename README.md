@@ -24,11 +24,12 @@ Defaults**, then pick one or more lights and set a brightness, a color
 temperature or both. A light group covers the lights in it, so picking the
 group is enough (see [Behavior](#behavior)). All the lights in an entry share
 its values, and you can give the entry a name (otherwise it's named after its
-lights). **Add entry** on
-the Light Defaults page adds another set of lights, **Configure** on an entry
-changes its lights or values, and deleting the entry removes them. Changes
-apply right away. A light can only be in one entry, so lights that already
-have one aren't offered again.
+lights). Tick **Reset when already on** to have a plain turn-on put lights
+that are already on back to these values too (see [Behavior](#behavior)).
+**Add entry** on the Light Defaults page adds another set of lights,
+**Configure** on an entry changes its lights or values, and deleting the entry
+removes them. Changes apply right away. A light can only be in one entry, so
+lights that already have one aren't offered again.
 
 If you change a light's entity ID, its entry follows it. The YAML map can't,
 so update the entity ID there yourself.
@@ -44,8 +45,10 @@ light_defaults:
     brightness: 80
 ```
 
-Either key can be left out. After editing the map, run the
-`light_defaults.reload` action; no restart needed.
+Either key can be left out. Add `reset_when_on: true` to a light to have a
+plain turn-on reset it even when it's already on (see [Behavior](#behavior)).
+After editing the map, run the `light_defaults.reload` action; no restart
+needed.
 
 ### Keeping the map in its own file
 
@@ -77,13 +80,21 @@ warning naming it. Lights only in YAML keep working as before.
 
 ## Behavior
 
-- Applies only when a light turns on from off, through `light.turn_on` or
+- Applies when a light turns on from off, through `light.turn_on` or
   `light.toggle`, from anything that goes through Home Assistant: dashboards,
   voice, HomeKit/Google, scenes, automations, areas and light groups.
 - Anything the call specifies wins, per attribute: `brightness_pct: 100` on its
   own still gets the default temperature, and an explicit color keeps the
   default brightness.
 - Lights that are already on, and calls with an effect or flash, are left alone.
+- **Reset when already on** (`reset_when_on: true`) changes that for lights
+  that are on: a plain turn-on, one without brightness or color, puts the
+  light back to its defaults, so a switch's "on" button doubles as a reset.
+  Turn-ons that set brightness or a color still leave the rest alone, and so
+  does a plain turn-on with a `transition` (Home Assistant skips the defaults
+  step for those). A light covered by a group follows the group's setting.
+  Leave it off for lights that motion or presence automations turn on, or
+  every re-fire will reset them.
 - A light group's defaults also cover the lights in it, whether you turn on the
   group or a single light, so setting up the group is enough. This works for
   Home Assistant light groups, groups inside groups, and Zigbee2MQTT groups

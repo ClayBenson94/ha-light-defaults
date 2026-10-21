@@ -90,6 +90,63 @@ async def test_already_on_light_is_left_alone(hass, lights):
     assert hass.states.get("light.ct_lamp").attributes["brightness"] == 128
 
 
+async def reload(hass: HomeAssistant, yaml_map: dict) -> None:
+    with patch(
+        "homeassistant.config.async_hass_config_yaml",
+        return_value={"light_defaults": yaml_map},
+    ):
+        await hass.services.async_call("light_defaults", "reload", blocking=True)
+
+
+async def test_reset_when_on_resets_a_plain_turn_on(hass, lights):
+    await reload(
+        hass, {"light.ct_lamp": {"brightness": 100, "temperature": 6500, "reset_when_on": True}}
+    )
+    await call(
+        hass, "turn_on", entity_id="light.ct_lamp", brightness_pct=50, color_temp_kelvin=2700
+    )
+    # A light that's on still keeps whatever the call doesn't set...
+    await call(hass, "turn_on", entity_id="light.ct_lamp", brightness_pct=40)
+    assert last(lights, "light.ct_lamp") == {"brightness": 102}
+    await call(hass, "turn_on", entity_id="light.ct_lamp", color_temp_kelvin=3000)
+    assert last(lights, "light.ct_lamp") == {"color_temp_kelvin": 3000}
+    # ...but a plain turn-on puts it back to its defaults.
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    assert last(lights, "light.ct_lamp") == {"brightness": 255, "color_temp_kelvin": 6500}
+    assert hass.states.get("light.ct_lamp").attributes["color_temp_kelvin"] == 6500
+
+    # HA skips the defaults step for a light that's on when the call has a transition.
+    await call(hass, "turn_on", entity_id="light.ct_lamp", transition=1)
+    assert last(lights, "light.ct_lamp") == {"transition": 1}
+
+
+async def test_reset_when_on_never_reaches_turn_off(hass, lights):
+    await reload(
+        hass, {"light.ct_lamp": {"brightness": 100, "temperature": 6500, "reset_when_on": True}}
+    )
+    # Turning off reaches the defaults step just like a plain turn-on of a light
+    # that's on, so this relies on HA dropping what we add.
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    await call(hass, "turn_off", entity_id="light.ct_lamp")
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    await call(hass, "toggle", entity_id="light.ct_lamp")
+    assert lights["light.ct_lamp"].off_calls == [{}, {}]
+    assert hass.states.get("light.ct_lamp").state == "off"
+
+
+async def test_reset_when_on_comes_with_a_groups_defaults(hass, lights):
+    await reload(hass, {"light.both": {"brightness": 50, "reset_when_on": True}})
+    await call(hass, "turn_on", entity_id="light.dimmer", brightness_pct=20)
+    await call(hass, "turn_on", entity_id="light.dimmer")
+    assert last(lights, "light.dimmer") == {"brightness": 128}
+
+    # Turning on the group while it's on resets each light in it.
+    await call(hass, "turn_on", entity_id="light.ct_lamp", brightness_pct=20)
+    await call(hass, "turn_on", entity_id="light.both")
+    assert last(lights, "light.ct_lamp") == {"brightness": 128}
+    assert last(lights, "light.dimmer") == {"brightness": 128}
+
+
 async def test_defaults_return_after_turning_off(hass, lights):
     await call(
         hass, "turn_on", entity_id="light.ct_lamp", brightness_pct=50, color_temp_kelvin=2700
@@ -243,6 +300,7 @@ async def test_reload_with_bad_config_keeps_current_map(hass, lights):
         {"light.ct_lamp": {"temp": 3000}},
         {"light.ct_lamp": {"brightness": 0}},
         {"light.ct_lamp": {"temperature": 500}},
+        {"light.ct_lamp": {"brightness": 50, "reset_when_on": "sometimes"}},
     ],
 )
 async def test_rejects_bad_config(hass, bad_map):
