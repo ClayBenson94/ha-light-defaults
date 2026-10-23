@@ -126,12 +126,12 @@ def _options(
             errors[CONF_ENTITIES] = "already_configured"
     if kind != CONF_EXCLUDE:
         values = {key: round(user_input[key]) for key in VALUES if key in user_input}
-        none = user_input.get(CONF_NO_DEFAULT, [])
-        if values.keys() & set(none):
-            errors["base"] = "value_and_no_default"
-        elif not values and not none:
+        # A value picked under No default for overrides its slider, since the
+        # form can't disable the slider when the box is ticked.
+        values |= dict.fromkeys(user_input.get(CONF_NO_DEFAULT, []))
+        if not values:
             errors["base"] = "no_values" if kind == CONF_ALL else "no_defaults"
-        options |= values | dict.fromkeys(none)
+        options |= values
     return None if errors else options
 
 

@@ -194,14 +194,17 @@ async def test_no_default_for_sets_none(hass, lights):
     assert await turn_on(hass, lights, "light.color_bulb") == {}
 
 
-async def test_a_value_with_no_default_for_it_is_refused(hass, lights):
+async def test_no_default_for_overrides_the_value(hass, lights):
+    await add_entry(hass, unique_id="all", brightness=50)
     result = await start_flow(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {"entities": ["light.ct_lamp"], "brightness": 50, "no_default": ["brightness"]},
+        {"entities": ["light.ct_lamp"], "brightness": 80.0, "no_default": ["brightness"]},
     )
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "value_and_no_default"}
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"entities": ["light.ct_lamp"], "brightness": None}
+    await hass.async_block_till_done()
+    assert await turn_on(hass, lights, "light.ct_lamp") == {}
 
 
 async def test_light_with_an_entry_is_not_offered_again(hass, lights):
@@ -291,6 +294,15 @@ async def test_options_show_none_under_no_default(hass, lights):
     )
     await hass.async_block_till_done()
     assert entry.options == {"entities": ["light.ct_lamp"], "brightness": 40}
+
+    # Ticking the box again is enough; the slider can keep its value.
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"entities": ["light.ct_lamp"], "brightness": 40.0, "no_default": ["brightness"]},
+    )
+    await hass.async_block_till_done()
+    assert entry.options == {"entities": ["light.ct_lamp"], "brightness": None}
 
 
 async def test_deleting_an_entry_stops_its_defaults(hass, lights):
@@ -529,7 +541,7 @@ async def test_translations_cover_the_flows(hass, lights):
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert labels("options", result) == fields(result)
 
-    errors = {"no_lights", "already_configured", "no_defaults", "no_values", "value_and_no_default"}
+    errors = {"no_lights", "already_configured", "no_defaults", "no_values"}
     for flow in ("config", "options"):
         assert set(strings[flow]["error"]) == errors
     assert set(strings["config"]["abort"]) == {"already_configured", "already_in_progress"}

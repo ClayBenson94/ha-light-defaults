@@ -24,7 +24,7 @@
           "entities": "Lights already in another entry, excluded lights included, aren't listed.",
           "name": "Shown on the Light Defaults page. Leave empty to use the light names.",
           "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
-          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Leave its value empty."
+          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Overrides the value above."
         }
       },
       "all": {
@@ -53,8 +53,7 @@
       "no_lights": "Pick at least one light.",
       "already_configured": "Some of these lights were just added to another entry.",
       "no_defaults": "Set a value, or pick one under No default for.",
-      "no_values": "Set a brightness, a color temperature or both.",
-      "value_and_no_default": "Leave a value empty when you pick it under No default for."
+      "no_values": "Set a brightness, a color temperature or both."
     },
     "abort": {
       "already_configured": "That's already set up. Use Configure on its entry to change it.",
@@ -75,7 +74,7 @@
         "data_description": {
           "entities": "Lights already in another entry, excluded lights included, aren't listed.",
           "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
-          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Leave its value empty."
+          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Overrides the value above."
         }
       },
       "all": {
@@ -104,8 +103,7 @@
       "no_lights": "Pick at least one light.",
       "already_configured": "Some of these lights were just added to another entry.",
       "no_defaults": "Set a value, or pick one under No default for.",
-      "no_values": "Set a brightness, a color temperature or both.",
-      "value_and_no_default": "Leave a value empty when you pick it under No default for."
+      "no_values": "Set a brightness, a color temperature or both."
     }
   },
   "selector": {
