@@ -1,10 +1,15 @@
-"""UI setup for Light Defaults: one config entry per set of lights.
+"""UI setup for Light Defaults: one config entry per set of lights, plus one for
+all lights and one for excluded lights.
 
-entry.options holds the lights and their defaults, the defaults in the same
-shape as a YAML entry: {"entities": ["light.a", "light.b"], "brightness": 80,
-"temperature": 2700}. entry.data is empty.
+entry.options holds everything and entry.data is empty. Values are in the same
+shape as a YAML entry, with None for `none`:
+- A set of lights (no unique ID): {"entities": ["light.a", "light.b"],
+  "brightness": 80, "temperature": None}.
+- All lights (unique ID "all"): {"brightness": 100}.
+- Excluded lights (unique ID "exclude"): {"entities": ["light.sunroom"]}.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -20,10 +25,15 @@ from homeassistant.const import CONF_ENTITIES, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
-from . import CONF_BRIGHTNESS, CONF_TEMPERATURE, DOMAIN
+from . import CONF_ALL, CONF_BRIGHTNESS, CONF_EXCLUDE, CONF_TEMPERATURE, DOMAIN, VALUES
+
+# Form only: the values a set of lights gets `none` for.
+CONF_NO_DEFAULT = "no_default"
+
+TITLES = {CONF_ALL: "All lights", CONF_EXCLUDE: "Excluded lights"}
 
 # Optional, so either can be left out (or cleared later), like in YAML.
-DEFAULTS_FIELDS = {
+VALUE_FIELDS = {
     vol.Optional(CONF_BRIGHTNESS): selector.NumberSelector(
         selector.NumberSelectorConfig(
             min=1,
@@ -44,14 +54,26 @@ DEFAULTS_FIELDS = {
     ),
 }
 
+NO_DEFAULT_FIELD = {
+    vol.Optional(CONF_NO_DEFAULT): selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=list(VALUES),
+            multiple=True,
+            mode=selector.SelectSelectorMode.LIST,
+            translation_key=CONF_NO_DEFAULT,
+        )
+    )
+}
+
 
 def _taken(hass: HomeAssistant, entry_id: str | None = None) -> set[str]:
-    """Lights in entries other than entry_id; a light can only be in one."""
+    """Lights in entries other than entry_id; a light can only be in one,
+    counting the excluded lights entry."""
     return {
         entity_id
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.entry_id != entry_id
-        for entity_id in entry.options[CONF_ENTITIES]
+        for entity_id in entry.options.get(CONF_ENTITIES, ())
     }
 
 
@@ -67,42 +89,70 @@ def _lights_field(hass: HomeAssistant, entry_id: str | None = None) -> dict:
     }
 
 
+def _fields(hass: HomeAssistant, kind: str | None, entry_id: str | None = None) -> dict:
+    """The form fields for an entry; kind is its unique ID (None for lights)."""
+    if kind == CONF_ALL:
+        return VALUE_FIELDS
+    if kind == CONF_EXCLUDE:
+        return _lights_field(hass, entry_id)
+    return {**_lights_field(hass, entry_id), **VALUE_FIELDS, **NO_DEFAULT_FIELD}
+
+
+def _form_values(options: Mapping[str, Any]) -> dict[str, Any]:
+    """An entry's options as form values: a `none` value is picked under No
+    default for, with its own field left empty."""
+    return {
+        **{key: value for key, value in options.items() if value is not None},
+        CONF_NO_DEFAULT: [key for key in VALUES if key in options and options[key] is None],
+    }
+
+
 def _options(
     hass: HomeAssistant,
+    kind: str | None,
     user_input: dict[str, Any],
     errors: dict[str, str],
     entry_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """The form's lights and whole-number defaults, or None with errors set."""
-    lights = user_input[CONF_ENTITIES]
-    defaults = {
-        key: round(user_input[key])
-        for key in (CONF_BRIGHTNESS, CONF_TEMPERATURE)
-        if key in user_input
-    }
-    if not lights:
-        errors[CONF_ENTITIES] = "no_lights"
-    elif _taken(hass, entry_id).intersection(lights):
-        # Added in another form since this one opened.
-        errors[CONF_ENTITIES] = "already_configured"
-    elif not defaults:
-        errors["base"] = "no_defaults"
-    else:
-        return {CONF_ENTITIES: lights, **defaults}
-    return None
+    """The form's lights and whole-number values (None for `none`), or None
+    with errors set."""
+    options: dict[str, Any] = {}
+    if kind != CONF_ALL:
+        lights = options[CONF_ENTITIES] = user_input[CONF_ENTITIES]
+        if not lights:
+            errors[CONF_ENTITIES] = "no_lights"
+        elif _taken(hass, entry_id).intersection(lights):
+            # Added in another form since this one opened.
+            errors[CONF_ENTITIES] = "already_configured"
+    if kind != CONF_EXCLUDE:
+        values = {key: round(user_input[key]) for key in VALUES if key in user_input}
+        none = user_input.get(CONF_NO_DEFAULT, [])
+        if values.keys() & set(none):
+            errors["base"] = "value_and_no_default"
+        elif not values and not none:
+            errors["base"] = "no_values" if kind == CONF_ALL else "no_defaults"
+        options |= values | dict.fromkeys(none)
+    return None if errors else options
 
 
 class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Add defaults for one or more lights."""
+    """Add defaults for some lights or for all lights, or lights to exclude."""
 
     VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        return self.async_show_menu(
+            step_id="user", menu_options=["lights", CONF_ALL, CONF_EXCLUDE]
+        )
+
+    async def async_step_lights(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            if options := _options(self.hass, user_input, errors):
+            if options := _options(self.hass, None, user_input, errors):
                 names = []
                 for entity_id in options[CONF_ENTITIES]:
                     state = self.hass.states.get(entity_id)
@@ -117,12 +167,44 @@ class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
             {
                 **_lights_field(self.hass),
                 vol.Optional(CONF_NAME): selector.TextSelector(),
-                **DEFAULTS_FIELDS,
+                **VALUE_FIELDS,
+                **NO_DEFAULT_FIELD,
             }
         )
         return self.async_show_form(
-            step_id="user",
+            step_id="lights",
             data_schema=self.add_suggested_values_to_schema(schema, user_input),
+            errors=errors,
+        )
+
+    async def async_step_all(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._async_step_single(CONF_ALL, user_input)
+
+    async def async_step_exclude(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return await self._async_step_single(CONF_EXCLUDE, user_input)
+
+    async def _async_step_single(
+        self, kind: str, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        """The one entry for all lights, or for excluded lights."""
+        await self.async_set_unique_id(kind)
+        self._abort_if_unique_id_configured()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if options := _options(self.hass, kind, user_input, errors):
+                return self.async_create_entry(
+                    title=TITLES[kind], data={}, options=options
+                )
+
+        return self.async_show_form(
+            step_id=kind,
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(_fields(self.hass, kind)), user_input
+            ),
             errors=errors,
         )
 
@@ -133,23 +215,46 @@ class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class LightDefaultsOptionsFlow(OptionsFlow):
-    """Change an entry's lights and defaults."""
+    """Change an entry's lights or values."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        entry_id = self.config_entry.entry_id
+        """The form for the entry's kind; this step's own for a set of lights."""
+        if self.config_entry.unique_id == CONF_ALL:
+            return await self.async_step_all()
+        if self.config_entry.unique_id == CONF_EXCLUDE:
+            return await self.async_step_exclude()
+        return self._async_form("init", user_input)
+
+    async def async_step_all(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return self._async_form(CONF_ALL, user_input)
+
+    async def async_step_exclude(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        return self._async_form(CONF_EXCLUDE, user_input)
+
+    @callback
+    def _async_form(
+        self, step_id: str, user_input: dict[str, Any] | None
+    ) -> ConfigFlowResult:
+        entry = self.config_entry
         errors: dict[str, str] = {}
         if user_input is not None:
-            if options := _options(self.hass, user_input, errors, entry_id):
+            if options := _options(
+                self.hass, entry.unique_id, user_input, errors, entry.entry_id
+            ):
                 return self.async_create_entry(data=options)
 
         return self.async_show_form(
-            step_id="init",
+            step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
-                vol.Schema({**_lights_field(self.hass, entry_id), **DEFAULTS_FIELDS}),
-                self.config_entry.options if user_input is None else user_input,
+                vol.Schema(_fields(self.hass, entry.unique_id, entry.entry_id)),
+                _form_values(entry.options) if user_input is None else user_input,
             ),
             errors=errors,
-            description_placeholders={"name": self.config_entry.title},
+            description_placeholders={"name": entry.title},
         )

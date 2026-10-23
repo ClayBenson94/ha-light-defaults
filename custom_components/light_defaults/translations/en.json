@@ -3,46 +3,117 @@
     "step": {
       "user": {
         "title": "Add light defaults",
-        "description": "Used when a light turns on from off and the call leaves out brightness or color. Pick one or more lights to share these values. A light group also covers the lights in it, except lights with defaults of their own. Leave either value empty to keep the lights' usual behavior for it.",
+        "description": "Defaults fill in brightness or color when a light turns on from off and the call leaves them out.",
+        "menu_options": {
+          "lights": "Defaults for some lights",
+          "all": "Defaults for all lights",
+          "exclude": "Lights to exclude"
+        }
+      },
+      "lights": {
+        "title": "Defaults for some lights",
+        "description": "Pick one or more lights to share these values. A light group also covers the lights in it, for any value they don't set themselves. Leave a value empty to use the one from a group these lights are in, or from the defaults for all lights.",
         "data": {
           "entities": "Lights",
           "name": "Name",
           "brightness": "Brightness",
+          "temperature": "Color temperature",
+          "no_default": "No default for"
+        },
+        "data_description": {
+          "entities": "Lights already in another entry, excluded lights included, aren't listed.",
+          "name": "Shown on the Light Defaults page. Leave empty to use the light names.",
+          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
+          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Leave its value empty."
+        }
+      },
+      "all": {
+        "title": "Defaults for all lights",
+        "description": "Used for any value a light's own entry, or a group it's in, leaves out. Excluded lights never get these.",
+        "data": {
+          "brightness": "Brightness",
           "temperature": "Color temperature"
         },
         "data_description": {
-          "entities": "Lights that already have defaults in another entry aren't listed.",
-          "name": "Shown on the Light Defaults page. Leave empty to use the light names.",
-          "temperature": "Lights without color temperature support ignore this."
+          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this."
+        }
+      },
+      "exclude": {
+        "title": "Lights to exclude",
+        "description": "These lights never get defaults, not even values set for them or for a group they're in. Picking a group excludes the lights in it.",
+        "data": {
+          "entities": "Lights"
+        },
+        "data_description": {
+          "entities": "Lights already in another entry aren't listed."
         }
       }
     },
     "error": {
       "no_lights": "Pick at least one light.",
-      "already_configured": "Some of these lights were just given defaults in another entry.",
-      "no_defaults": "Set a brightness, a color temperature or both."
+      "already_configured": "Some of these lights were just added to another entry.",
+      "no_defaults": "Set a value, or pick one under No default for.",
+      "no_values": "Set a brightness, a color temperature or both.",
+      "value_and_no_default": "Leave a value empty when you pick it under No default for."
+    },
+    "abort": {
+      "already_configured": "That's already set up. Use Configure on its entry to change it.",
+      "already_in_progress": "That's already being set up in another window."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Defaults for {name}",
-        "description": "Used when a light turns on from off and the call leaves out brightness or color. A light group also covers the lights in it, except lights with defaults of their own. Leave either value empty to keep the lights' usual behavior for it.",
+        "description": "Pick one or more lights to share these values. A light group also covers the lights in it, for any value they don't set themselves. Leave a value empty to use the one from a group these lights are in, or from the defaults for all lights.",
         "data": {
           "entities": "Lights",
+          "brightness": "Brightness",
+          "temperature": "Color temperature",
+          "no_default": "No default for"
+        },
+        "data_description": {
+          "entities": "Lights already in another entry, excluded lights included, aren't listed.",
+          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
+          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Leave its value empty."
+        }
+      },
+      "all": {
+        "title": "Defaults for all lights",
+        "description": "Used for any value a light's own entry, or a group it's in, leaves out. Excluded lights never get these.",
+        "data": {
           "brightness": "Brightness",
           "temperature": "Color temperature"
         },
         "data_description": {
-          "entities": "Lights that already have defaults in another entry aren't listed.",
-          "temperature": "Lights without color temperature support ignore this."
+          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this."
+        }
+      },
+      "exclude": {
+        "title": "Lights to exclude",
+        "description": "These lights never get defaults, not even values set for them or for a group they're in. Picking a group excludes the lights in it.",
+        "data": {
+          "entities": "Lights"
+        },
+        "data_description": {
+          "entities": "Lights already in another entry aren't listed."
         }
       }
     },
     "error": {
       "no_lights": "Pick at least one light.",
-      "already_configured": "Some of these lights were just given defaults in another entry.",
-      "no_defaults": "Set a brightness, a color temperature or both."
+      "already_configured": "Some of these lights were just added to another entry.",
+      "no_defaults": "Set a value, or pick one under No default for.",
+      "no_values": "Set a brightness, a color temperature or both.",
+      "value_and_no_default": "Leave a value empty when you pick it under No default for."
+    }
+  },
+  "selector": {
+    "no_default": {
+      "options": {
+        "brightness": "Brightness",
+        "temperature": "Color temperature"
+      }
     }
   }
 }
