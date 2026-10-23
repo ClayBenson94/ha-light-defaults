@@ -103,3 +103,18 @@ async def test_zigbee2mqtt_group_covers_its_lights(hass, mqtt_mock):
     payload = await sent(hass, mqtt_mock)
     assert payload["state"] == "ON" and payload["color_temp"] == 370
     assert abs(payload["brightness"] - 127) <= 1
+
+
+async def test_zigbee2mqtt_group_gets_the_defaults_for_all_lights(hass, mqtt_mock):
+    # Unlike an HA light group it sends one command, so it fills them in itself.
+    await _setup(hass, mqtt_mock, {"all": {"brightness": 50}})
+    async_fire_mqtt_message(hass, "zigbee2mqtt/Overhead", json.dumps({"state": "OFF"}))
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.overhead"}, blocking=True
+    )
+    topic, payload = mqtt_mock.async_publish.call_args[0][:2]
+    assert topic == "zigbee2mqtt/Overhead/set"
+    payload = json.loads(payload)
+    assert payload["state"] == "ON" and abs(payload["brightness"] - 127) <= 1
+    assert "color_temp" not in payload
