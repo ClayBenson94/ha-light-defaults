@@ -3,7 +3,7 @@
 Default brightness and color temperature for Home Assistant lights. When a
 light turns on from off and the call leaves out brightness or color, the
 defaults fill the gap instead of the light coming back at whatever it was last
-set to.
+set to. Optionally, a plain turn-on can also reset lights that are already on.
 
 ## Install
 
@@ -37,8 +37,12 @@ Defaults**, then pick what to add:
   keep the lights' usual behavior for it. A light group covers the lights in
   it, so picking the group is enough (see [Behavior](#behavior)). All the
   lights in an entry share its values, and you can give the entry a name
-  (otherwise it's named after its lights).
-- **Defaults for all lights**: a brightness, a color temperature or both.
+  (otherwise it's named after its lights). **When already on** sets what a
+  plain turn-on does to these lights while they're on: **Use group or
+  all-lights setting** (the default), **Reset to defaults**, or **Leave as
+  is**. An entry can set just this.
+- **Defaults for all lights**: a brightness, a color temperature or both, and
+  **Reset lights that are already on** (off unless you turn it on).
 - **Lights to exclude**: lights, or light groups, that never get defaults.
 
 **Add entry** on the Light Defaults page adds another, **Configure** on an
@@ -60,15 +64,19 @@ light_defaults:
     - light.sunroom
   light.office_lamp:
     temperature: 6500  # Kelvin, 1000–10000
+    reset_when_on: true
   light.living_room_lamp:
     brightness: 80
     temperature: none
 ```
 
 Every key can be left out. Here `light.office_lamp` comes on at 6500 K and
-100% (from `all`), and `light.living_room_lamp` at 80% and whatever color
-temperature it had. After editing the map, run the `light_defaults.reload`
-action; no restart needed.
+100% (from `all`), and a plain turn-on while it's on sets it back to that.
+`light.living_room_lamp` comes on at 80% and whatever color temperature it
+had. `reset_when_on` works under `all`, a light or a group, like the values;
+`reset_when_on: false` keeps one light out of its group's or `all`'s `true`.
+After editing the map, run the `light_defaults.reload` action; no restart
+needed.
 
 ### Keeping the map in its own file
 
@@ -110,7 +118,15 @@ as before.
 - Anything the call specifies wins, per attribute: `brightness_pct: 100` on its
   own still gets the default temperature, and an explicit color keeps the
   default brightness.
-- Lights that are already on, and calls with an effect or flash, are left alone.
+- Lights that are already on are left alone, unless they're set to reset
+  (`reset_when_on`, **When already on** in the UI) and the call has nothing in
+  it: no brightness, color, transition, effect or flash. Then they get the same
+  defaults as from off. Calls with an effect or flash are always left alone.
+- To turn on such a light without resetting it, add a `transition` to the
+  call: Home Assistant skips defaults for a lit light when the call has one.
+- Resets also come from voice and Google "turn on", area and group calls, and
+  automations that fire again while a light is on, like motion, so the setting
+  is off until you turn it on.
 - Each value comes from the most specific place that sets it: the light's own
   entry, then the configured groups it's in from smallest to largest, then the
   defaults for all lights. `none` counts as setting it, to nothing.

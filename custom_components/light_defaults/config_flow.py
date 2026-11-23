@@ -2,10 +2,11 @@
 all lights and one for excluded lights.
 
 entry.options holds everything and entry.data is empty. Values are in the same
-shape as a YAML entry, with None for `none`:
+shape as a YAML entry, with None for `none`, and reset_when_on left out to
+inherit it:
 - A set of lights (no unique ID): {"entities": ["light.a", "light.b"],
-  "brightness": 80, "temperature": None}.
-- All lights (unique ID "all"): {"brightness": 100}.
+  "brightness": 80, "temperature": None, "reset_when_on": False}.
+- All lights (unique ID "all"): {"brightness": 100, "reset_when_on": True}.
 - Excluded lights (unique ID "exclude"): {"entities": ["light.sunroom"]}.
 """
 
@@ -25,10 +26,23 @@ from homeassistant.const import CONF_ENTITIES, CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
-from . import CONF_ALL, CONF_BRIGHTNESS, CONF_EXCLUDE, CONF_TEMPERATURE, DOMAIN, VALUES
+from . import (
+    CONF_ALL,
+    CONF_BRIGHTNESS,
+    CONF_EXCLUDE,
+    CONF_RESET,
+    CONF_TEMPERATURE,
+    DOMAIN,
+    VALUES,
+)
 
 # Form only: the values a set of lights gets `none` for.
 CONF_NO_DEFAULT = "no_default"
+
+# When already on, for a set of lights: Reset to defaults and Leave as is store
+# reset_when_on True and False, and Use group or all-lights setting stores
+# nothing, so the lights inherit it.
+INHERIT, RESET, LEAVE = "inherit", "reset", "leave"
 
 TITLES = {CONF_ALL: "All lights", CONF_EXCLUDE: "Excluded lights"}
 
@@ -65,6 +79,21 @@ NO_DEFAULT_FIELD = {
     )
 }
 
+RESET_FIELD = {
+    vol.Required(CONF_RESET, default=INHERIT): selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=[INHERIT, RESET, LEAVE],
+            mode=selector.SelectSelectorMode.LIST,
+            translation_key=CONF_RESET,
+        )
+    )
+}
+
+# All lights have nothing to inherit from: a toggle, stored only when on.
+ALL_RESET_FIELD = {
+    vol.Optional(CONF_RESET, default=False): selector.BooleanSelector()
+}
+
 
 def _taken(hass: HomeAssistant, entry_id: str | None = None) -> set[str]:
     """Lights in entries other than entry_id; a light can only be in one,
@@ -92,19 +121,28 @@ def _lights_field(hass: HomeAssistant, entry_id: str | None = None) -> dict:
 def _fields(hass: HomeAssistant, kind: str | None, entry_id: str | None = None) -> dict:
     """The form fields for an entry; kind is its unique ID (None for lights)."""
     if kind == CONF_ALL:
-        return VALUE_FIELDS
+        return {**VALUE_FIELDS, **ALL_RESET_FIELD}
     if kind == CONF_EXCLUDE:
         return _lights_field(hass, entry_id)
-    return {**_lights_field(hass, entry_id), **VALUE_FIELDS, **NO_DEFAULT_FIELD}
-
-
-def _form_values(options: Mapping[str, Any]) -> dict[str, Any]:
-    """An entry's options as form values: a `none` value is picked under No
-    default for, with its own field left empty."""
     return {
-        **{key: value for key, value in options.items() if value is not None},
-        CONF_NO_DEFAULT: [key for key in VALUES if key in options and options[key] is None],
+        **_lights_field(hass, entry_id),
+        **VALUE_FIELDS,
+        **NO_DEFAULT_FIELD,
+        **RESET_FIELD,
     }
+
+
+def _form_values(kind: str | None, options: Mapping[str, Any]) -> dict[str, Any]:
+    """An entry's options as form values: a `none` value is picked under No
+    default for, with its own field left empty, and a set of lights'
+    reset_when_on is its When already on choice."""
+    values = {key: value for key, value in options.items() if value is not None}
+    values[CONF_NO_DEFAULT] = [
+        key for key in VALUES if key in options and options[key] is None
+    ]
+    if kind is None and CONF_RESET in options:
+        values[CONF_RESET] = RESET if options[CONF_RESET] else LEAVE
+    return values
 
 
 def _options(
@@ -114,8 +152,8 @@ def _options(
     errors: dict[str, str],
     entry_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """The form's lights and whole-number values (None for `none`), or None
-    with errors set."""
+    """The form's lights, whole-number values (None for `none`) and
+    reset_when_on, or None with errors set."""
     options: dict[str, Any] = {}
     if kind != CONF_ALL:
         lights = options[CONF_ENTITIES] = user_input[CONF_ENTITIES]
@@ -129,6 +167,12 @@ def _options(
         # A value picked under No default for overrides its slider, since the
         # form can't disable the slider when the box is ticked.
         values |= dict.fromkeys(user_input.get(CONF_NO_DEFAULT, []))
+        # reset_when_on counts as a setting, so an entry can set only that.
+        if kind == CONF_ALL:
+            if user_input.get(CONF_RESET):
+                values[CONF_RESET] = True
+        elif (choice := user_input.get(CONF_RESET, INHERIT)) != INHERIT:
+            values[CONF_RESET] = choice == RESET
         if not values:
             errors["base"] = "no_values" if kind == CONF_ALL else "no_defaults"
         options |= values
@@ -169,6 +213,7 @@ class LightDefaultsConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_NAME): selector.TextSelector(),
                 **VALUE_FIELDS,
                 **NO_DEFAULT_FIELD,
+                **RESET_FIELD,
             }
         )
         return self.async_show_form(
@@ -253,7 +298,9 @@ class LightDefaultsOptionsFlow(OptionsFlow):
             step_id=step_id,
             data_schema=self.add_suggested_values_to_schema(
                 vol.Schema(_fields(self.hass, entry.unique_id, entry.entry_id)),
-                _form_values(entry.options) if user_input is None else user_input,
+                _form_values(entry.unique_id, entry.options)
+                if user_input is None
+                else user_input,
             ),
             errors=errors,
             description_placeholders={"name": entry.title},

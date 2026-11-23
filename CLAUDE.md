@@ -23,20 +23,30 @@ light_defaults:
     temperature: none  # no default, whatever `all` or a group says
 ```
 
+Opt-in per entry, `reset_when_on: true` makes a bare `light.turn_on` of a
+light that's already on reset it to the same defaults.
+
 Built for color-temperature-only bulbs on Zigbee2MQTT (Hue White Ambiance
 class). The flat entity → `brightness`/`temperature` map is the point of the
-project; keep it that simple. `all` and `exclude` are the only other keys (the
-owner asked for them in 1.3.0), and they can't clash with entity IDs. The
-owner asked for UI setup too, which lives in `config_flow.py`; keep everything
-else in `__init__.py` and keep the code small unless the owner asks for more.
+project; keep it that simple. `reset_when_on` is the only other thing an entry
+sets (the owner asked for it in 1.4.0). `all` and `exclude` are the only other
+keys (the owner asked for them in 1.3.0), and they can't clash with entity
+IDs. The owner asked for UI setup too, which lives in `config_flow.py`; keep
+everything else in `__init__.py` and keep the code small unless the owner asks
+for more.
 
 ## Behavior contract
 
 Don't change these without asking the owner:
 
-- Applies only when the light is off and being turned on. Lights that are
-  already on are never touched, so a motion automation re-firing `turn_on`
-  doesn't reset a dimmed light.
+- Applies when the light is off and being turned on. Lights that are already
+  on are untouched unless their resolved `reset_when_on` is true and the call
+  carries no data once HA has normalized it (no brightness, color, transition,
+  effect, flash, brightness step or profile); then they get exactly what they
+  would get from off. It's off unless set, so a motion automation re-firing
+  `turn_on` doesn't reset a dimmed light. A `transition` is the per-call
+  opt-out: HA skips the defaults step for a lit light when the call has one.
+  The owner approved resetting lit lights in the 1.4.0 spec (2026-11-22).
 - Explicit values win per attribute: a call with brightness still gets the
   default temperature, and a call with any color attribute still gets the
   default brightness.
@@ -46,7 +56,8 @@ Don't change these without asking the owner:
   smallest to largest, then `all`. Each value is looked up on its own, so a
   light's own temperature can go with its group's brightness. `none` (None in
   config entries, **No default for** in the UI) counts as setting it, so the
-  light gets no default for it.
+  light gets no default for it. `reset_when_on` resolves the same way, and its
+  `false` counts as setting it, so one lamp can opt out of its group's `true`.
 - Excluded lights, and the lights in excluded groups, get nothing, even with
   entries of their own. Excluded in YAML or in the UI counts, and an exclusion
   beats an entry in either place, with a warning.
@@ -58,7 +69,8 @@ Don't change these without asking the owner:
   HA's `brightness_pct`). `temperature` is injected as `color_temp_kelvin`; HA
   converts or drops it per light.
 - `light_profiles.csv` defaults still apply after ours (we fill first, then
-  call the original).
+  call the original). On a lit light we reset, HA's profile step sees params
+  that aren't empty, so only a profile's transition applies.
 - Fail open: errors in our code are logged and the turn-on goes through
   untouched. If the hook is missing, `async_setup` logs an error and returns
   False.
@@ -84,12 +96,20 @@ light integration's `Profiles` object at `hass.data["light_profiles"]`
 
 - `process_turn_on_params()` calls `apply_default(entity_id, light.is_on,
   params)` once per entity, for `light.turn_on` and for `light.toggle` from off
-  (`LightEntity.async_toggle`). By then `brightness_pct`, `brightness_step*`,
-  `color_name` and `profile:` have been normalized into `brightness`,
-  `rgb_color` or `hs_color`. Color-mode conversion and `filter_turn_on_params`
-  run after it, which is why we only set `brightness` and `color_temp_kelvin`.
-- `process_turn_off_params()` calls `apply_default(entity_id, True, params)`;
-  `state_on` is True, so we do nothing.
+  (`LightEntity.async_toggle`), when the light is off, the params are empty or
+  they have no `transition`. So a bare turn-on of a lit light arrives as
+  `state_on=True, params={}`, and a lit light's call with a transition never
+  arrives. By then `brightness_pct`, `brightness_step*`, `color_name` and
+  `profile:` have been normalized into `brightness`, `rgb_color` or
+  `hs_color`. Color-mode conversion and `filter_turn_on_params` run after it,
+  which is why we only set `brightness` and `color_temp_kelvin`.
+- `process_turn_off_params()` calls `apply_default(entity_id, True, params)`
+  whenever the call has no transition. That's the same arguments as a bare
+  turn-on of a lit light, so with `reset_when_on` we fill values into the
+  turn-off params. `filter_turn_off_params()` then keeps only `transition` and
+  `flash`, so nothing reaches the light. Harmless, and tests cover it (a
+  recording light's turn-off and toggle, and the Z2M `{"state": "OFF"}`
+  payload); if HA ever passes more through, those tests fail.
 
 HA light groups forward `light.turn_on` to their members with everything the
 call ended up with (`LightGroup.async_turn_on`, `FORWARDED_ATTRIBUTES`), so
@@ -109,18 +129,22 @@ service level and writes its values before this hook runs, so lights it
 manages follow AL.
 
 `hass.data["light_defaults"]` is a `LightDefaults` holding values (None for
-`none`) by entity ID, and `all` under `CONF_ALL`, from YAML (`.yaml`) and from
-the UI (`.entries`), plus each side's excluded lights (`.yaml_excluded`,
-`.entries_excluded`); the hook reads it through `.get()`, and only for a light
-turning on from off. `async_setup` installs the hook whether or not YAML
+`none`) and `reset_when_on` by entity ID, and `all` under `CONF_ALL`, from
+YAML (`.yaml`) and from the UI (`.entries`), plus each side's excluded lights
+(`.yaml_excluded`, `.entries_excluded`); the hook reads it through `.get()`,
+only for a light turning on from off or a call with no params to a lit light
+(bare turn-offs included). `async_setup` installs the hook whether or not YAML
 exists (HA calls it before setting up config entries). Each config entry keeps
 everything in `options`, in the same shape as a YAML entry, and `data` is
 empty:
 
 - A set of lights has no unique ID: its lights under `entities` and their
-  shared values beside them. Its title is the optional name, or its lights'
-  names.
-- The all lights entry has unique ID `all` and just the values.
+  shared values beside them, plus `reset_when_on` (`true` or `false`, left out
+  for **Use group or all-lights setting**). Its title is the optional name, or
+  its lights' names.
+- The all lights entry has unique ID `all` and just the values, plus
+  `reset_when_on: true` when its toggle is on (off is left out, like 1.3.0
+  entries, which have no key and so stay off).
 - The excluded lights entry has unique ID `exclude` and just `entities`.
 
 The unique IDs keep those two to one entry each. `async_setup_entry` and an
@@ -179,15 +203,18 @@ change to check before updating HA.
 
 - `tests/test_light_defaults.py`: behavior, using recording test lights from
   `tests/recording_light.py`: `all`, `none`, exclusions, values from nested
-  groups, and HA light groups passing the turn-on through.
+  groups, HA light groups passing the turn-on through, and `reset_when_on`
+  (lit lights, inheritance, the `transition` opt-out, plain turn-offs).
 - `tests/test_config_flow.py`: UI setup (the Add entry menu, config and
-  options flows for each kind of entry, **No default for**, a configured light
-  group covering its lights, overlap with YAML, and `en.json` labeling every
-  form field).
+  options flows for each kind of entry, **No default for**, **When already
+  on** and **Reset lights that are already on**, a configured light group
+  covering its lights, overlap with YAML, and `en.json` labeling every form
+  field and the When already on choices).
 - `tests/test_mqtt_z2m.py`: the MQTT payload a Zigbee2MQTT-style light
-  receives, alone and as a member of a configured Z2M group, and a Z2M group
-  filling in `all` itself. A bare turn-on is a single `{"state": "ON",
-  "brightness": 254, "color_temp": 153}` command.
+  receives, alone and as a member of a configured Z2M group, a Z2M group
+  filling in `all` itself, and a lit Z2M group resetting. A bare turn-on is a
+  single `{"state": "ON", "brightness": 254, "color_temp": 153}` command, and
+  a turn-off stays `{"state": "OFF"}` with `reset_when_on`.
 
 Gotchas:
 

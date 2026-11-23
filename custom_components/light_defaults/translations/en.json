@@ -18,13 +18,15 @@
           "name": "Name",
           "brightness": "Brightness",
           "temperature": "Color temperature",
-          "no_default": "No default for"
+          "no_default": "No default for",
+          "reset_when_on": "When already on"
         },
         "data_description": {
           "entities": "Lights already in another entry, excluded lights included, aren't listed.",
           "name": "Shown on the Light Defaults page. Leave empty to use the light names.",
           "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
-          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Overrides the value above."
+          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Overrides the value above.",
+          "reset_when_on": "What a plain turn on, like a wall switch or voice, does to these lights while they're on. Reset to defaults also applies when an automation, like motion, turns them on again. A turn on with a brightness, color or transition never resets them."
         }
       },
       "all": {
@@ -32,10 +34,12 @@
         "description": "Used for any value a light's own entry, or a group it's in, leaves out. Excluded lights never get these.",
         "data": {
           "brightness": "Brightness",
-          "temperature": "Color temperature"
+          "temperature": "Color temperature",
+          "reset_when_on": "Reset lights that are already on"
         },
         "data_description": {
-          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this."
+          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
+          "reset_when_on": "When a light that's on gets a plain turn on, like a wall switch or voice, it goes back to its defaults. That includes automations, like motion, turning it on again. A turn on with a brightness, color or transition never resets a light, and lights can opt out under When already on."
         }
       },
       "exclude": {
@@ -69,12 +73,14 @@
           "entities": "Lights",
           "brightness": "Brightness",
           "temperature": "Color temperature",
-          "no_default": "No default for"
+          "no_default": "No default for",
+          "reset_when_on": "When already on"
         },
         "data_description": {
           "entities": "Lights already in another entry, excluded lights included, aren't listed.",
           "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
-          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Overrides the value above."
+          "no_default": "These lights keep their usual behavior for what you pick here, even if a group or the defaults for all lights set it. Overrides the value above.",
+          "reset_when_on": "What a plain turn on, like a wall switch or voice, does to these lights while they're on. Reset to defaults also applies when an automation, like motion, turns them on again. A turn on with a brightness, color or transition never resets them."
         }
       },
       "all": {
@@ -82,10 +88,12 @@
         "description": "Used for any value a light's own entry, or a group it's in, leaves out. Excluded lights never get these.",
         "data": {
           "brightness": "Brightness",
-          "temperature": "Color temperature"
+          "temperature": "Color temperature",
+          "reset_when_on": "Reset lights that are already on"
         },
         "data_description": {
-          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this."
+          "temperature": "Color lights switch to white. Lights with neither color nor color temperature ignore this.",
+          "reset_when_on": "When a light that's on gets a plain turn on, like a wall switch or voice, it goes back to its defaults. That includes automations, like motion, turning it on again. A turn on with a brightness, color or transition never resets a light, and lights can opt out under When already on."
         }
       },
       "exclude": {
@@ -111,6 +119,13 @@
       "options": {
         "brightness": "Brightness",
         "temperature": "Color temperature"
+      }
+    },
+    "reset_when_on": {
+      "options": {
+        "inherit": "Use group or all-lights setting",
+        "reset": "Reset to defaults",
+        "leave": "Leave as is"
       }
     }
   }

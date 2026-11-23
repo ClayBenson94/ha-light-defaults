@@ -349,6 +349,156 @@ async def test_warns_about_excluded_lights_with_defaults(hass, caplog):
     assert "Excluded, so their defaults are ignored: light.ct_lamp" in caplog.text
 
 
+async def while_on(hass: HomeAssistant, lights, entity_id: str, **data) -> dict:
+    """Turn a light on at 20% and 2700 K, turn it on again with data while it's
+    on, and return what it received the second time."""
+    await call(hass, "turn_on", entity_id=entity_id, brightness_pct=20, color_temp_kelvin=2700)
+    await call(hass, "turn_on", entity_id=entity_id, **data)
+    return last(lights, entity_id)
+
+
+RESETS = {
+    "all": {"brightness": 50, "temperature": 4000},
+    "light.ct_lamp": {"brightness": 100, "temperature": 6500, "reset_when_on": True},
+}
+
+
+async def test_reset_when_on_resets_a_lit_light(hass):
+    lights = await set_up(hass, RESETS)
+    assert await while_on(hass, lights, "light.ct_lamp") == {
+        "brightness": 255,
+        "color_temp_kelvin": 6500,
+    }
+    state = hass.states.get("light.ct_lamp")
+    assert state.attributes["brightness"] == 255
+    assert state.attributes["color_temp_kelvin"] == 6500
+    # Without it, a lit light keeps what it has.
+    assert await while_on(hass, lights, "light.color_bulb") == {}
+
+
+@pytest.mark.parametrize("reset", [{}, {"reset_when_on": False}])
+async def test_lit_light_without_reset_when_on_is_left_alone(hass, reset):
+    lights = await set_up(hass, {"light.ct_lamp": {"brightness": 100, "temperature": 6500, **reset}})
+    assert await while_on(hass, lights, "light.ct_lamp") == {}
+    assert hass.states.get("light.ct_lamp").attributes["brightness"] == 51
+
+
+async def test_reset_leaves_calls_with_data_alone(hass):
+    lights = await set_up(hass, RESETS)
+    # Only what the call says, no default temperature.
+    assert await while_on(hass, lights, "light.ct_lamp", brightness_pct=40) == {"brightness": 102}
+    assert await while_on(hass, lights, "light.ct_lamp", effect="candle") == {"effect": "candle"}
+    assert await while_on(hass, lights, "light.ct_lamp", flash="short") == {"flash": "short"}
+
+
+async def test_a_transition_opts_out_of_the_reset(hass):
+    lights = await set_up(hass, RESETS)
+    assert await while_on(hass, lights, "light.ct_lamp", transition=2) == {"transition": 2}
+    # From off, it still gets the defaults.
+    await call(hass, "turn_off", entity_id="light.ct_lamp")
+    await call(hass, "turn_on", entity_id="light.ct_lamp", transition=2)
+    assert last(lights, "light.ct_lamp") == {
+        "brightness": 255,
+        "color_temp_kelvin": 6500,
+        "transition": 2,
+    }
+
+
+async def test_reset_when_on_comes_from_the_most_specific_place(hass):
+    lights = await set_up(
+        hass,
+        {
+            "all": {"brightness": 50, "temperature": 4000, "reset_when_on": True},
+            "light.downstairs": {"reset_when_on": False},
+            "light.lamps": {"reset_when_on": True},
+            "light.color_bulb": {"reset_when_on": False},
+        },
+        Lamps=["light.ct_lamp", "light.color_bulb"],
+        Downstairs=["light.lamps", "light.dimmer"],
+    )
+    # From all, for a light in no configured group.
+    assert await while_on(hass, lights, "light.unconfigured") == {
+        "brightness": 128,
+        "color_temp_kelvin": 4000,
+    }
+    # Downstairs stops it for the dimmer, but Lamps, the smaller group inside
+    # Downstairs, turns it back on for the lamp.
+    assert await while_on(hass, lights, "light.dimmer") == {}
+    assert await while_on(hass, lights, "light.ct_lamp") == {
+        "brightness": 128,
+        "color_temp_kelvin": 4000,
+    }
+    # The color bulb's own false beats Lamps.
+    assert await while_on(hass, lights, "light.color_bulb") == {}
+
+
+async def test_excluded_lights_are_not_reset(hass):
+    lights = await set_up(
+        hass,
+        {"all": {"brightness": 50, "reset_when_on": True}, "exclude": ["light.dimmer"]},
+    )
+    assert await while_on(hass, lights, "light.dimmer") == {}
+    assert await while_on(hass, lights, "light.unconfigured") == {"brightness": 128}
+
+
+async def test_reset_skips_a_none_value(hass):
+    lights = await set_up(
+        hass,
+        {
+            "all": {"brightness": 50, "temperature": 4000, "reset_when_on": True},
+            "light.ct_lamp": {"temperature": "none"},
+        },
+    )
+    assert await while_on(hass, lights, "light.ct_lamp") == {"brightness": 128}
+
+
+async def test_light_group_partly_on_resets_only_lights_set_to(hass):
+    lights = await set_up(
+        hass,
+        {
+            "all": {"brightness": 50, "temperature": 4000},
+            "light.ct_lamp": {"reset_when_on": True},
+        },
+        Room=["light.ct_lamp", "light.color_bulb", "light.unconfigured"],
+    )
+    await call(hass, "turn_on", entity_id=["light.ct_lamp", "light.color_bulb"], brightness_pct=20)
+    await call(hass, "turn_on", entity_id="light.room")
+    assert last(lights, "light.ct_lamp") == {"brightness": 128, "color_temp_kelvin": 4000}
+    assert last(lights, "light.color_bulb") == {}
+    # Off, so it gets the defaults as always.
+    assert last(lights, "light.unconfigured") == {"brightness": 128, "color_temp_kelvin": 4000}
+
+
+async def test_turn_off_and_toggle_stay_plain(hass):
+    # A bare turn-off reaches the hook like a bare turn-on of a lit light, so
+    # we fill in values, but HA keeps only transition and flash for a turn-off.
+    lights = await set_up(hass, RESETS)
+    lamp = lights["light.ct_lamp"]
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    await call(hass, "turn_off", entity_id="light.ct_lamp")
+    assert lamp.off_calls[-1] == {}
+    assert hass.states.get("light.ct_lamp").state == "off"
+    await call(hass, "turn_on", entity_id="light.ct_lamp")
+    await call(hass, "toggle", entity_id="light.ct_lamp")
+    assert lamp.off_calls == [{}, {}]
+    assert hass.states.get("light.ct_lamp").state == "off"
+
+
+@pytest.mark.parametrize(
+    "bad_map",
+    [
+        {"light.ct_lamp": {"reset_when_on": "sometimes"}},
+        {"light.ct_lamp": {"reset_when_on": None}},
+        {"all": {"reset_when_on": "none"}},
+        {"exclude": {"reset_when_on": True}},
+    ],
+)
+async def test_reset_when_on_must_be_true_or_false(hass, bad_map):
+    setup_test_component_platform(hass, "light", make_lights())
+    config = {"light": [{"platform": "test"}], "light_defaults": bad_map}
+    assert not await async_setup_component(hass, "light_defaults", config)
+
+
 async def test_light_profiles_csv_still_fills_the_rest(hass, lights):
     profiles = hass.data["light_profiles"]
     profiles.data["light.ct_lamp.default"] = Profile("light.ct_lamp.default", None, None, 10, 2)
@@ -411,6 +561,21 @@ async def test_reload_reads_map_from_included_file(hass, lights, tmp_path, monke
     await hass.services.async_call("light_defaults", "reload", blocking=True)
     await call(hass, "turn_on", entity_id="light.ct_lamp")
     assert last(lights, "light.ct_lamp") == {"brightness": 51}
+
+
+async def test_reload_picks_up_reset_when_on(hass, lights):
+    assert await while_on(hass, lights, "light.ct_lamp") == {}
+    new = {
+        "light_defaults": {
+            "light.ct_lamp": {"brightness": 100, "temperature": 6500, "reset_when_on": True}
+        }
+    }
+    with patch("homeassistant.config.async_hass_config_yaml", return_value=new):
+        await hass.services.async_call("light_defaults", "reload", blocking=True)
+    assert await while_on(hass, lights, "light.ct_lamp") == {
+        "brightness": 255,
+        "color_temp_kelvin": 6500,
+    }
 
 
 async def test_reload_with_bad_config_keeps_current_map(hass, lights):

@@ -14,7 +14,8 @@ from homeassistant.components.light import (
 
 
 class RecordingLight(LightEntity):
-    """Light that records the kwargs of every async_turn_on call in `calls`."""
+    """Light that records the kwargs of every async_turn_on call in `calls`,
+    and of every async_turn_off call in `off_calls`."""
 
     _attr_should_poll = False
 
@@ -33,11 +34,14 @@ class RecordingLight(LightEntity):
         self._attr_hs_color = None
         if effects:
             self._attr_supported_features = (
-                LightEntityFeature.EFFECT | LightEntityFeature.TRANSITION
+                LightEntityFeature.EFFECT
+                | LightEntityFeature.FLASH
+                | LightEntityFeature.TRANSITION
             )
             self._attr_effect_list = effects
             self._attr_effect = None
         self.calls: list[dict[str, Any]] = []
+        self.off_calls: list[dict[str, Any]] = []
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         self.calls.append(kwargs)
@@ -55,6 +59,7 @@ class RecordingLight(LightEntity):
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        self.off_calls.append(kwargs)
         self._attr_is_on = False
         self.async_write_ha_state()
 
