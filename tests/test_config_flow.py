@@ -94,6 +94,25 @@ def suggested(result) -> dict:
     }
 
 
+def shown(result, field: str):
+    """What one field opens with: its suggested value, or else its default."""
+    key = next(key for key in result["data_schema"].schema if key == field)
+    if key.description and "suggested_value" in key.description:
+        return key.description["suggested_value"]
+    return key.default()
+
+
+async def turn_on_again(hass: HomeAssistant, lights, entity_id: str):
+    """Turn a light on at 20%, then again with nothing in the call, and return
+    what it received the second time."""
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": entity_id, "brightness_pct": 20}, blocking=True
+    )
+    await hass.services.async_call("light", "turn_on", {"entity_id": entity_id}, blocking=True)
+    await hass.async_block_till_done()
+    return lights[entity_id].calls[-1]
+
+
 async def test_add_entry_offers_three_kinds(hass, lights):
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert result["type"] is FlowResultType.MENU
@@ -515,6 +534,115 @@ async def test_an_exclusion_in_either_place_beats_an_entry(hass, lights, caplog)
     assert await turn_on(hass, lights, "light.dimmer") == {}
 
 
+@pytest.mark.parametrize(
+    ("choice", "stored"),
+    [("reset", {"reset_when_on": True}), ("leave", {"reset_when_on": False}), ("inherit", {})],
+)
+async def test_add_lights_with_when_already_on(hass, lights, choice, stored):
+    result = await start_flow(hass)
+    assert shown(result, "reset_when_on") == "inherit"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"entities": ["light.ct_lamp"], "brightness": 50.0, "reset_when_on": choice},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"entities": ["light.ct_lamp"], "brightness": 50, **stored}
+    # Configure opens with the same choice.
+    result = await hass.config_entries.options.async_init(result["result"].entry_id)
+    assert shown(result, "reset_when_on") == choice
+
+
+async def test_change_when_already_on(hass, lights):
+    await add_entry(hass, unique_id="all", brightness=50, reset_when_on=True)
+    entry = await add_entry(hass, "light.ct_lamp", temperature=2700)
+    reset = {"brightness": 128, "color_temp_kelvin": 2700}
+    assert await turn_on_again(hass, lights, "light.ct_lamp") == reset
+
+    for choice, stored, received in (
+        ("leave", {"reset_when_on": False}, {}),
+        ("reset", {"reset_when_on": True}, reset),
+        ("inherit", {}, reset),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"entities": ["light.ct_lamp"], "temperature": 2700.0, "reset_when_on": choice},
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+        assert entry.options == {"entities": ["light.ct_lamp"], "temperature": 2700, **stored}
+        assert await turn_on_again(hass, lights, "light.ct_lamp") == received
+
+
+async def test_reset_lights_that_are_already_on(hass, lights):
+    await add_entry(hass, "light.ct_lamp", temperature=6500)
+    result = await start_flow(hass, "all")
+    assert shown(result, "reset_when_on") is False
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"brightness": 50.0, "reset_when_on": True}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"brightness": 50, "reset_when_on": True}
+    entry = result["result"]
+    await hass.async_block_till_done()
+    assert await turn_on_again(hass, lights, "light.unconfigured") == {"brightness": 128}
+    assert await turn_on_again(hass, lights, "light.ct_lamp") == {
+        "brightness": 128,
+        "color_temp_kelvin": 6500,
+    }
+
+    # Configure opens with it on, and turning it off takes it out.
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert suggested(result) == {"brightness": 50, "reset_when_on": True}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"brightness": 50.0, "reset_when_on": False}
+    )
+    await hass.async_block_till_done()
+    assert entry.options == {"brightness": 50}
+    assert await turn_on_again(hass, lights, "light.unconfigured") == {}
+
+
+async def test_an_entry_can_set_just_when_already_on(hass, lights):
+    result = await start_flow(hass, "all")
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"reset_when_on": True}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"reset_when_on": True}
+    all_lights = result["result"]
+    result = await start_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"entities": ["light.ct_lamp"], "reset_when_on": "leave"}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"entities": ["light.ct_lamp"], "reset_when_on": False}
+    lamp = result["result"]
+    await add_entry(hass, "light.overhead", brightness=80)
+    assert await turn_on_again(hass, lights, "light.color_bulb") == {"brightness": 204}
+    assert await turn_on_again(hass, lights, "light.ct_lamp") == {}
+
+    # Off, or Use group or all-lights setting, still needs something else.
+    result = await hass.config_entries.options.async_init(all_lights.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"reset_when_on": False}
+    )
+    assert result["errors"] == {"base": "no_values"}
+    result = await hass.config_entries.options.async_init(lamp.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"entities": ["light.ct_lamp"], "reset_when_on": "inherit"}
+    )
+    assert result["errors"] == {"base": "no_defaults"}
+
+
+async def test_excluded_lights_have_no_when_already_on(hass, lights):
+    result = await start_flow(hass, "exclude")
+    assert [str(key) for key in result["data_schema"].schema] == ["entities"]
+    with pytest.raises(InvalidData):
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"entities": ["light.dimmer"], "reset_when_on": True}
+        )
+
+
 async def test_translations_cover_the_flows(hass, lights):
     strings = json.loads(TRANSLATIONS.read_text())
 
@@ -546,3 +674,13 @@ async def test_translations_cover_the_flows(hass, lights):
         assert set(strings[flow]["error"]) == errors
     assert set(strings["config"]["abort"]) == {"already_configured", "already_in_progress"}
     assert set(strings["selector"]["no_default"]["options"]) == {"brightness", "temperature"}
+
+
+async def test_translations_cover_when_already_on(hass, lights):
+    strings = json.loads(TRANSLATIONS.read_text())
+    result = await start_flow(hass)
+    picker = next(
+        value for key, value in result["data_schema"].schema.items() if key == "reset_when_on"
+    )
+    labels = strings["selector"][picker.config["translation_key"]]["options"]
+    assert list(labels) == picker.config["options"]

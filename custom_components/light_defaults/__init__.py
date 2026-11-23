@@ -10,6 +10,7 @@ leaves out brightness and/or color, the configured defaults fill the gap:
         - light.sunroom
       light.office_lamp:
         temperature: 6500   # Kelvin; the brightness comes from `all`
+        reset_when_on: true # a bare turn-on while it's on resets it too
       light.living_room_lamp:
         brightness: 80
         temperature: none   # no default temperature, whatever `all` says
@@ -17,10 +18,13 @@ leaves out brightness and/or color, the configured defaults fill the gap:
 - Anything in the call wins, per attribute: `brightness_pct: 100` on its own
   still gets the default temperature, and an explicit color keeps the default
   brightness.
-- Lights that are already on, and calls with an effect or flash, are left alone.
+- Lights that are already on are left alone, unless `reset_when_on` is true
+  for them and the call has nothing in it; then they get the same values as
+  from off. Calls with an effect or flash are always left alone.
 - Each value comes from the most specific place that sets it: the light's own
   entry, then the configured groups it's in from smallest to largest, then
-  `all`. `none` sets it to nothing.
+  `all`. `none` sets it to nothing, and `reset_when_on: false` stops a group's
+  or `all`'s true.
 - Excluded lights, and the lights in excluded groups, never get defaults.
   Neither do HA light groups: they pass the turn-on to their lights, and each
   of those gets its own.
@@ -74,8 +78,9 @@ DOMAIN = "light_defaults"
 CONF_ALL = "all"
 CONF_BRIGHTNESS = "brightness"
 CONF_EXCLUDE = "exclude"
+CONF_RESET = "reset_when_on"
 CONF_TEMPERATURE = "temperature"
-# The values an entry can set.
+# The values an entry can set. An entry can also set CONF_RESET.
 VALUES = (CONF_BRIGHTNESS, CONF_TEMPERATURE)
 
 # Where the light integration keeps its profiles object (light.const.DATA_PROFILES).
@@ -116,6 +121,7 @@ LIGHT_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_BRIGHTNESS): _value(1, 100),
         vol.Optional(CONF_TEMPERATURE): _value(1000, 10000),
+        vol.Optional(CONF_RESET): cv.boolean,
     }
 )
 
@@ -142,10 +148,10 @@ CONFIG_SCHEMA = vol.Schema(
 class LightDefaults:
     """Defaults from the YAML config and from UI config entries."""
 
-    # Values (None for `none`) by entity ID, and by CONF_ALL for all lights.
-    # A UI entry replaces the YAML one for the same key.
-    yaml: dict[str, dict[str, int | None]] = field(default_factory=dict)
-    entries: dict[str, dict[str, int | None]] = field(default_factory=dict)
+    # Values (None for `none`) and CONF_RESET by entity ID, and by CONF_ALL for
+    # all lights. A UI entry replaces the YAML one for the same key.
+    yaml: dict[str, dict[str, int | bool | None]] = field(default_factory=dict)
+    entries: dict[str, dict[str, int | bool | None]] = field(default_factory=dict)
     # Excluded lights; excluded in either place counts.
     yaml_excluded: set[str] = field(default_factory=set)
     entries_excluded: set[str] = field(default_factory=set)
@@ -155,9 +161,10 @@ class LightDefaults:
         self.yaml_excluded = set(conf.pop(CONF_EXCLUDE, ()))
         self.yaml = conf
 
-    def get(self, hass: HomeAssistant, entity_id: str) -> dict[str, int]:
-        """What to fill in for a light: each value from the most specific place
-        that sets it. Nothing for excluded lights and HA light groups."""
+    def get(self, hass: HomeAssistant, entity_id: str) -> dict[str, int | bool]:
+        """What to fill in for a light, and its CONF_RESET: each from the most
+        specific place that sets it. Nothing for excluded lights and HA light
+        groups."""
         excluded = self.yaml_excluded | self.entries_excluded
         if (
             entity_id in excluded
@@ -172,8 +179,9 @@ class LightDefaults:
             if entity_id in (lights := _group_lights(hass, group_id))
         )
         # Least specific first, so later ones win: all lights, the groups from
-        # largest to smallest, then the light's own entry.
-        values: dict[str, int | None] = {}
+        # largest to smallest, then the light's own entry. A CONF_RESET of
+        # False gets through the None filter, so it beats a less specific True.
+        values: dict[str, int | bool | None] = {}
         for key in (CONF_ALL, *(group_id for _, group_id in reversed(groups)), entity_id):
             values.update(defaults.get(key, {}))
         return {key: value for key, value in values.items() if value is not None}
@@ -223,7 +231,7 @@ def _group_lights(hass: HomeAssistant, entity_id: str) -> set[str]:
     return found
 
 
-def _fill_defaults(light: dict[str, int], params: dict[str, Any]) -> None:
+def _fill_defaults(light: dict[str, int | bool], params: dict[str, Any]) -> None:
     """Fill in what the call left out."""
     if CONF_BRIGHTNESS in light and ATTR_BRIGHTNESS not in params:
         params[ATTR_BRIGHTNESS] = round(255 * light[CONF_BRIGHTNESS] / 100)
@@ -255,9 +263,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         **kwargs: Any,
     ) -> None:
         try:
-            # Only for a light turning on from off, without an effect or flash.
-            if not state_on and ATTR_EFFECT not in params and ATTR_FLASH not in params:
-                _fill_defaults(defaults.get(hass, entity_id), params)
+            # For a light turning on from off, or a lit light with CONF_RESET
+            # getting a call with nothing in it; never with an effect or flash.
+            # A bare turn-off arrives like that bare call too, but HA keeps
+            # only transition and flash for a turn-off, so the values we fill
+            # in never reach the light.
+            if (
+                (not state_on or not params)
+                and ATTR_EFFECT not in params
+                and ATTR_FLASH not in params
+            ):
+                light = defaults.get(hass, entity_id)
+                if not state_on or light.get(CONF_RESET):
+                    _fill_defaults(light, params)
         except Exception:  # Never let this break light.turn_on.
             _LOGGER.exception("Couldn't apply defaults to %s", entity_id)
         # Any light_profiles.csv defaults still apply to whatever is left.
@@ -312,7 +330,11 @@ def _add_entry(defaults: LightDefaults, entry: ConfigEntry) -> None:
     if entry.unique_id == CONF_EXCLUDE:
         defaults.entries_excluded.update(entry.runtime_data)
     else:
-        values = {key: entry.options[key] for key in VALUES if key in entry.options}
+        values = {
+            key: entry.options[key]
+            for key in (*VALUES, CONF_RESET)
+            if key in entry.options
+        }
         for key in entry.runtime_data:
             defaults.entries[key] = values
     defaults.warn_overlap(entry.runtime_data)

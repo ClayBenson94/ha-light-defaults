@@ -118,3 +118,45 @@ async def test_zigbee2mqtt_group_gets_the_defaults_for_all_lights(hass, mqtt_moc
     payload = json.loads(payload)
     assert payload["state"] == "ON" and abs(payload["brightness"] - 127) <= 1
     assert "color_temp" not in payload
+
+
+async def test_lit_zigbee2mqtt_group_resets_in_one_command(hass, mqtt_mock):
+    await _setup(
+        hass,
+        mqtt_mock,
+        {"light.overhead": {"brightness": 50, "temperature": 2700, "reset_when_on": True}},
+    )
+    # Zigbee2MQTT reports a group as on while any of its bulbs is.
+    async_fire_mqtt_message(
+        hass,
+        "zigbee2mqtt/Overhead",
+        json.dumps({"state": "ON", "brightness": 25, "color_temp": 250, "color_mode": "color_temp"}),
+    )
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "light", "turn_on", {"entity_id": "light.overhead"}, blocking=True
+    )
+    assert mqtt_mock.async_publish.call_count == 1
+    topic, payload = mqtt_mock.async_publish.call_args[0][:2]
+    assert topic == "zigbee2mqtt/Overhead/set"
+    payload = json.loads(payload)
+    assert payload["state"] == "ON" and payload["color_temp"] == 370
+    assert abs(payload["brightness"] - 127) <= 1
+
+
+async def test_reset_when_on_turn_off_stays_plain(hass, mqtt_mock):
+    await _setup(
+        hass,
+        mqtt_mock,
+        {"light.office_lamp": {"brightness": 100, "temperature": 6500, "reset_when_on": True}},
+    )
+    report(hass, {"state": "ON", "brightness": 80, "color_temp": 370, "color_mode": "color_temp"})
+    await hass.async_block_till_done()
+    assert await sent(hass, mqtt_mock) == {"state": "ON", "brightness": 254, "color_temp": 153}
+
+    await hass.services.async_call(
+        "light", "turn_off", {"entity_id": "light.office_lamp"}, blocking=True
+    )
+    topic, payload = mqtt_mock.async_publish.call_args[0][:2]
+    assert topic == "zigbee2mqtt/Office Lamp/set"
+    assert json.loads(payload) == {"state": "OFF"}
